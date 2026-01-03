@@ -1,0 +1,304 @@
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Rankiva – SEO Insights for Google Search Console\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-21 02:18+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: \n"
+"Language: \n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Loco https://localise.biz/\n"
+"X-Loco-Version: 2.8.0; wp-6.9; php-8.4.10\n"
+"X-Domain: search-console-seo-opportunities"
+
+#: views/connect-screen.php:47
+msgid "Always up-to-date with your latest search performance"
+msgstr ""
+
+#. Author of the plugin
+msgid "Anwar Hossain"
+msgstr ""
+
+#: views/opportunities-list.php:86
+msgid "Clicks"
+msgstr ""
+
+#: views/connect-screen.php:54
+msgid "Connect Google Search Console"
+msgstr ""
+
+#: views/connection-status.php:16
+msgid "Connected to Google Search Console"
+msgstr ""
+
+#: views/opportunities-list.php:94
+msgid "CTR"
+msgstr ""
+
+#: views/filters-form.php:39
+msgid "CTR gap only"
+msgstr ""
+
+#: views/opportunities-list.php:109
+msgid "CTR gap:"
+msgstr ""
+
+#: views/connection-status.php:20
+msgid "Data pending verification. Please run a sync."
+msgstr ""
+
+#: views/sync-required-screen.php:60 views/header.php:19
+msgid "Disconnect"
+msgstr ""
+
+#: search-console-seo-opportunities.php:136
+msgid "Disconnect Google Search Console?"
+msgstr ""
+
+#: views/connect-screen.php:32
+msgid "Discover Hidden Opportunities"
+msgstr ""
+
+#: views/opportunities-list.php:54 views/opportunities-list.php:131
+msgid "Edit"
+msgstr ""
+
+#. Description of the plugin
+msgid "Find posts Google already likes but are underperforming"
+msgstr ""
+
+#: views/connect-screen.php:33
+msgid "Find posts ranking well but underperforming"
+msgstr ""
+
+#: views/connect-screen.php:40
+msgid "Get actionable insights to improve CTR and rankings"
+msgstr ""
+
+#: views/connect-screen.php:25
+msgid "Google Search Console"
+msgstr ""
+
+#: views/connect-screen.php:65
+msgid ""
+"Google Search Console is a trademark of Google LLC. This plugin is not "
+"affiliated with Google."
+msgstr ""
+
+#: views/opportunities-list.php:126
+msgid "High impressions, low CTR"
+msgstr ""
+
+#: views/stats-cards.php:10
+msgid "High Opportunity"
+msgstr ""
+
+#. Author URI of the plugin
+msgid "https://anwarhossain.dev/"
+msgstr ""
+
+#: views/opportunities-list.php:78
+msgid "Impressions"
+msgstr ""
+
+#: views/stats-cards.php:24
+msgid "Last Sync"
+msgstr ""
+
+#: views/sync-required-screen.php:28
+msgid "Let's make sure everything is up to date"
+msgstr ""
+
+#: views/connection-status.php:25
+msgid "Localhost detected."
+msgstr ""
+
+#: views/opportunities-list.php:132
+msgid "Mark Updated"
+msgstr ""
+
+#: views/opportunities-list.php:61
+msgid "Money Post"
+msgstr ""
+
+#: views/filters-form.php:31
+msgid ""
+"Money Posts are pages that already receive strong impressions and rank "
+"between positions 5–20 in Google. These posts usually deliver the fastest "
+"SEO wins."
+msgstr ""
+
+#: views/filters-form.php:31
+msgid "Money posts only"
+msgstr ""
+
+#: views/opportunities-list.php:22
+msgid ""
+"No opportunities found. Uncheck filters and click \"Apply Fillters\" button."
+msgstr ""
+
+#: views/stats-cards.php:17
+msgid ""
+"Number of published posts that received impressions from Google Search "
+"Console during the last sync period. Posts with zero impressions are "
+"excluded."
+msgstr ""
+
+#: views/pagination.php:128
+msgid "of"
+msgstr ""
+
+#: views/stats-cards.php:11
+msgid ""
+"Opportunity Score (0–100). Calculated from impressions, ranking position, "
+"and CTR gap. Higher score means faster SEO improvement potential."
+msgstr ""
+
+#: views/pagination.php:128
+msgid "Page "
+msgstr ""
+
+#: views/opportunities-list.php:70
+msgid "Position"
+msgstr ""
+
+#: views/header.php:17
+msgid "Posts Google already likes but are underperforming"
+msgstr ""
+
+#: views/pagination.php:132
+msgid "Posts per page:"
+msgstr ""
+
+#: views/stats-cards.php:16
+msgid "Posts with Traffic"
+msgstr ""
+
+#: search-console-seo-opportunities.php:134
+msgid "processed posts"
+msgstr ""
+
+#: views/sync-required-screen.php:34
+msgid "Property Not Found"
+msgstr ""
+
+#: views/connection-status.php:18
+msgid "Property:"
+msgstr ""
+
+#: views/connect-screen.php:59
+msgid "Read-only access. You can disconnect at any time."
+msgstr ""
+
+#: views/connect-screen.php:46
+msgid "Real-time Data Sync"
+msgstr ""
+
+#. Name of the plugin
+#: includes/class-admin-page.php:68 includes/class-admin-page.php:69
+#: views/connect-screen.php:21 views/sync-required-screen.php:23
+msgid "Rankiva – SEO Insights for Google Search Console"
+msgstr ""
+
+#: views/filters-form.php:25
+msgid "Search post title"
+msgstr ""
+
+#: includes/class-auth.php:101
+msgid "Security check failed. Please try connecting again."
+msgstr ""
+
+#: includes/class-auth.php:102
+msgid "Security Error"
+msgstr ""
+
+#: views/connect-screen.php:26
+msgid "See which posts Google already ranks but are not getting enough clicks."
+msgstr ""
+
+#: views/header.php:16
+msgid "SEO Opportunities"
+msgstr ""
+
+#: views/connect-screen.php:25
+msgid "SEO Opportunities from"
+msgstr ""
+
+#: views/filters-form.php:35
+msgid "Show snoozed only"
+msgstr ""
+
+#: views/connection-status.php:27
+msgid "Showing data from verified property:"
+msgstr ""
+
+#: views/connect-screen.php:39
+msgid "Smart Recommendations"
+msgstr ""
+
+#: views/opportunities-list.php:145
+msgid "Snooze 30d"
+msgstr ""
+
+#: views/opportunities-list.php:137
+msgid "Snoozed until "
+msgstr ""
+
+#: search-console-seo-opportunities.php:131
+msgid "Starting sync…"
+msgstr ""
+
+#: views/filters-form.php:42
+msgid "Submit"
+msgstr ""
+
+#: search-console-seo-opportunities.php:133
+msgid "Sync completed!"
+msgstr ""
+
+#: search-console-seo-opportunities.php:135
+msgid "Sync failed"
+msgstr ""
+
+#: views/sync-required-screen.php:56
+msgid "Sync Now"
+msgstr ""
+
+#: views/sync-required-screen.php:27
+msgid "Sync Required"
+msgstr ""
+
+#: search-console-seo-opportunities.php:132
+msgid "Syncing…"
+msgstr ""
+
+#: views/opportunities-list.php:61
+msgid ""
+"This post already performs well in Google and is close to top rankings. "
+"Improving this page usually results in faster traffic and revenue growth."
+msgstr ""
+
+#: views/opportunities-list.php:143
+msgid "Unsnooze"
+msgstr ""
+
+#: views/sync-required-screen.php:48
+msgid ""
+"We found existing Google Search Console data on this site, but it hasn't "
+"been confirmed for the currently connected Google account yet.\n"
+"                    To make sure we load the correct property and show "
+"accurate SEO opportunities, please run a one-time sync."
+msgstr ""
+
+#: views/sync-required-screen.php:45
+msgid "What's happening?"
+msgstr ""
+
+#: views/sync-required-screen.php:67
+msgid "You can disconnect if you want to connect a different Google account."
+msgstr ""
