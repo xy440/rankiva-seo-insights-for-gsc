@@ -62,10 +62,39 @@
     transition: all 0.3s ease;
 }
 .scso-disconnect-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.2);
-            transform: translateY(-2px);
-        }
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+}
+/* Header Actions */
+.scso-header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.scso-sync-btn {
+    background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    border: none;
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.scso-sync-btn:hover {
+    background: linear-gradient(135deg, #7c3aed, #9333ea);
+    transform: translateY(-1px);
+}
+
+.scso-sync-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
 /* =========================================================
    CONNECTION INFO
 ========================================================= */
@@ -557,7 +586,7 @@
 
         .scso-stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
             gap: 25px;
             margin-bottom: 40px;
         }
@@ -570,7 +599,7 @@
             border: 1px solid rgba(255, 255, 255, 0.08);
             transition: all 0.4s ease;
             position: relative;
-            overflow: hidden;
+            /*overflow: hidden;*/
             animation: slideUp 0.6s ease 0.4s both;
         }
 
@@ -587,6 +616,7 @@
             background: rgba(255, 255, 255, 0.05);
             border-color: rgba(255, 255, 255, 0.15);
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+            z-index: 100;
         }
 
         .scso-stat-card:nth-child(1) {
@@ -866,24 +896,6 @@
             flex-shrink: 0;
             box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
             position: relative;
-        }
-
-        .scso-post-score::before {
-            content: '';
-            position: absolute;
-            /*inset: -2px;*/
-            border-radius: 20px;
-            padding: 2px;
-            background: linear-gradient(135deg, #667eea, #a855f7, #ec4899);
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .scso-post-card:hover .scso-post-score::before {
-            opacity: 1;
         }
 
         .scso-score-label {
@@ -1495,4 +1507,836 @@
 
 .scso-tooltip:hover::after {
   opacity: 1;
+}
+/**
+ * Rankiva v1.1 - Keywords Section Styles
+ * Add this to admin.css
+ */
+
+/* =========================================
+   KEYWORDS SECTION
+   ========================================= */
+
+.scso-keywords-section {
+    margin-top: 16px;
+    padding-top: 12px;
+    padding-bottom: 24px;
+}
+
+.scso-keywords-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+    text-align: left;
+}
+
+.scso-keywords-toggle:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.scso-keywords-toggle[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.scso-keywords-toggle-icon {
+    font-size: 14px;
+}
+
+.scso-keywords-toggle-text {
+    font-weight: 500;
+}
+
+.scso-keywords-count {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+}
+
+.scso-keywords-arrow {
+    margin-left: auto;
+    font-size: 10px;
+    transition: transform 0.2s ease;
+}
+
+.scso-keywords-toggle[aria-expanded="true"] .scso-keywords-arrow {
+    transform: rotate(180deg);
+}
+
+.scso-keywords-list {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    overflow: hidden;
+}
+
+/* Keywords Table */
+.scso-keywords-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.scso-keywords-table th,
+.scso-keywords-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: #ffffffe6;
+}
+
+.scso-keywords-table th {
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.scso-keywords-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.scso-keywords-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Keyword text - truncate long keywords */
+.scso-keyword-text {
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Position indicators */
+.scso-keyword-pos {
+    font-weight: 500;
+}
+
+.scso-pos-top3 {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.scso-pos-page1 {
+    color: #3b82f6;
+    background: rgba(59, 130, 246, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.scso-pos-page2 {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    .scso-keywords-table th:nth-child(4),
+    .scso-keywords-table td:nth-child(4),
+    .scso-keywords-table th:nth-child(5),
+    .scso-keywords-table td:nth-child(5) {
+        display: none;
+    }
+    
+    .scso-keyword-text {
+        max-width: 120px;
+    }
+}
+
+/* =========================================
+   STATS CARD UPDATE FOR KEYWORDS
+   ========================================= */
+
+.scso-stat-keywords {
+    color: #a78bfa;
+}
+
+.scso-stat-keywords .scso-stat-icon {
+    color: #a78bfa;
+}
+
+
+/**
+ * Enhanced Keywords Section Styles
+ * Add this to admin.min.css or replace existing keywords styles
+ */
+
+/* =========================================
+   PRIORITY KEYWORD HIGHLIGHT
+   ========================================= */
+
+.scso-priority-keyword {
+    background: linear-gradient(135deg, rgba(251, 146, 60, 0.15), rgba(234, 88, 12, 0.1));
+    border: 1px solid rgba(251, 146, 60, 0.3);
+    border-left: 4px solid #fb923c;
+    padding: 16px 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: slideUp 0.4s ease;
+}
+
+.scso-priority-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.scso-priority-label {
+    font-weight: 700;
+    color: #fb923c;
+}
+
+.scso-priority-text {
+    color: rgba(255, 255, 255, 0.9);
+    line-height: 1.6;
+}
+
+.scso-priority-text strong {
+    color: #a78bfa;
+    font-weight: 700;
+    background: rgba(167, 139, 250, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.scso-priority-ctr {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+/* =========================================
+   KEYWORDS SECTION
+   ========================================= */
+
+.scso-keywords-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.scso-keywords-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    padding: 12px 16px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    width: 100%;
+    text-align: left;
+}
+
+.scso-keywords-toggle:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateY(-2px);
+}
+
+.scso-keywords-toggle[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-color: transparent;
+}
+
+.scso-keywords-toggle-icon {
+    font-size: 16px;
+}
+
+.scso-keywords-count {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.scso-keywords-arrow {
+    margin-left: auto;
+    font-size: 10px;
+    transition: transform 0.3s ease;
+}
+
+.scso-keywords-toggle[aria-expanded="true"] .scso-keywords-arrow {
+    transform: rotate(180deg);
+}
+
+/* =========================================
+   KEYWORDS TABLE
+   ========================================= */
+
+.scso-keywords-list {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-top: none;
+    border-radius: 0 0 10px 10px;
+    overflow: hidden;
+}
+
+.scso-keywords-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.scso-keywords-table th,
+.scso-keywords-table td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.scso-keywords-table th {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.scso-keywords-table tbody tr {
+    transition: all 0.2s ease;
+}
+
+.scso-keywords-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.scso-keywords-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* =========================================
+   KEYWORD BADGES
+   ========================================= */
+
+.scso-kw-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+}
+
+.scso-badge-best {
+    background: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.scso-badge-great {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.scso-badge-good {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fb923c;
+    border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.scso-badge-low {
+    background: rgba(107, 114, 128, 0.3);
+    color: #9ca3af;
+    border: 1px solid rgba(107, 114, 128, 0.4);
+}
+
+/* =========================================
+   KEYWORD CELLS
+   ========================================= */
+
+.scso-keyword-text {
+    color: rgba(255, 255, 255, 0.95);
+    font-weight: 500;
+    max-width: 300px;
+}
+
+.scso-keyword-pos span {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.scso-pos-top3 {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.scso-pos-page1 {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.scso-pos-page2 {
+    background: rgba(251, 146, 60, 0.15);
+    color: #fb923c;
+    border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.scso-keyword-impr,
+.scso-keyword-clicks,
+.scso-keyword-ctr {
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
+}
+
+.scso-click-count {
+    position: relative;
+}
+
+/* =========================================
+   CTR INDICATORS
+   ========================================= */
+
+.scso-ctr-indicator {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.scso-ctr-good {
+    color: #4ade80;
+}
+
+.scso-ctr-low {
+    color: #f87171;
+}
+
+/* =========================================
+   TOOLTIPS FOR METRICS
+   ========================================= */
+
+.scso-keywords-table td[title],
+.scso-keyword-pos span[title] {
+    cursor: help;
+    position: relative;
+}
+
+.scso-keywords-table td[title]:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* =========================================
+   RESPONSIVE DESIGN
+   ========================================= */
+
+@media (max-width: 768px) {
+    .scso-priority-keyword {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .scso-keywords-table {
+        font-size: 12px;
+    }
+    
+    .scso-keywords-table th,
+    .scso-keywords-table td {
+        padding: 8px 10px;
+    }
+    
+    .scso-keywords-table th:nth-child(3),
+    .scso-keywords-table td:nth-child(3) {
+        display: none;
+    }
+    
+    .scso-keyword-text {
+        max-width: 150px;
+        font-size: 12px;
+    }
+    
+    .scso-kw-badge {
+        font-size: 9px;
+        padding: 2px 6px;
+    }
+}
+
+@media (max-width: 480px) {
+    .scso-keywords-table th:nth-child(5),
+    .scso-keywords-table td:nth-child(5) {
+        display: none;
+    }
+}
+
+/* =========================================
+   ANIMATIONS
+   ========================================= */
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/**
+ * Additional Interactive Styles for Keywords Feature
+ * Add to admin.min.css
+ */
+
+/* =========================================
+   COPY NOTIFICATION
+   ========================================= */
+
+.scso-copy-notification {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(34, 197, 94, 0.95);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    animation: copyNotification 0.3s ease;
+}
+
+@keyframes copyNotification {
+    0% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.8);
+    }
+    100% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* =========================================
+   CLICKABLE KEYWORD TEXT
+   ========================================= */
+
+.scso-keyword-text {
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.scso-keyword-text:hover {
+    color: #a78bfa !important;
+}
+
+.scso-keyword-text:active {
+    transform: scale(0.98);
+}
+
+/* =========================================
+   SORTABLE TABLE HEADERS
+   ========================================= */
+
+.scso-keywords-table th {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.scso-keywords-table th:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.scso-keywords-table th.sort-asc::after,
+.scso-keywords-table th.sort-desc::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+}
+
+.scso-keywords-table th.sort-asc::after {
+    border-bottom: 6px solid rgba(255, 255, 255, 0.8);
+}
+
+.scso-keywords-table th.sort-desc::after {
+    border-top: 6px solid rgba(255, 255, 255, 0.8);
+}
+
+/* =========================================
+   PRIORITY KEYWORD TRANSITIONS
+   ========================================= */
+
+.scso-priority-keyword {
+    transition: all 0.3s ease;
+    cursor: default;
+}
+
+.scso-priority-keyword:hover {
+    box-shadow: 0 6px 20px rgba(251, 146, 60, 0.2);
+}
+
+/* =========================================
+   KEYWORD BADGE HOVER EFFECTS
+   ========================================= */
+
+.scso-kw-badge {
+    transition: all 0.2s ease;
+}
+
+.scso-keyword-text:hover .scso-kw-badge {
+    transform: scale(1.05);
+}
+
+.scso-badge-best:hover {
+    box-shadow: 0 2px 8px rgba(234, 179, 8, 0.4);
+}
+
+.scso-badge-great:hover {
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
+}
+
+.scso-badge-good:hover {
+    box-shadow: 0 2px 8px rgba(251, 146, 60, 0.4);
+}
+
+/* =========================================
+   POSITION BADGE HOVER EFFECTS
+   ========================================= */
+
+.scso-keyword-pos span {
+    transition: all 0.2s ease;
+}
+
+.scso-keywords-table tbody tr:hover .scso-keyword-pos span {
+    transform: scale(1.05);
+}
+
+/* =========================================
+   CTR INDICATOR ANIMATIONS
+   ========================================= */
+
+.scso-ctr-indicator {
+    transition: all 0.2s ease;
+}
+
+.scso-ctr-good {
+    animation: pulseGreen 2s infinite;
+}
+
+.scso-ctr-low {
+    animation: pulseRed 2s infinite;
+}
+
+@keyframes pulseGreen {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+@keyframes pulseRed {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* =========================================
+   CLICK COUNT HOVER EFFECT
+   ========================================= */
+
+.scso-click-count {
+    position: relative;
+    display: inline-block;
+}
+
+.scso-keywords-table tbody tr:hover .scso-click-count {
+    color: #a78bfa;
+    font-weight: 600;
+}
+
+/* =========================================
+   LOADING STATE (for lazy loading)
+   ========================================= */
+
+.scso-keywords-loading {
+    text-align: center;
+    padding: 30px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.scso-keywords-loading::after {
+    content: '...';
+    animation: loadingDots 1.5s infinite;
+}
+
+@keyframes loadingDots {
+    0%, 20% {
+        content: '.';
+    }
+    40% {
+        content: '..';
+    }
+    60%, 100% {
+        content: '...';
+    }
+}
+
+/* =========================================
+   EMPTY STATE
+   ========================================= */
+
+.scso-keywords-empty {
+    text-align: center;
+    padding: 30px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+}
+
+/* =========================================
+   KEYBOARD NAVIGATION FOCUS STATES
+   ========================================= */
+
+.scso-keywords-toggle:focus {
+    outline: 2px solid #a78bfa;
+    outline-offset: 2px;
+}
+
+.scso-keywords-table th:focus,
+.scso-keywords-table td:focus {
+    outline: 2px solid #a78bfa;
+    outline-offset: -2px;
+}
+
+/* =========================================
+   MOBILE OPTIMIZATIONS
+   ========================================= */
+
+@media (max-width: 768px) {
+    .scso-priority-keyword {
+        font-size: 13px;
+        padding: 14px 16px;
+    }
+    
+    .scso-priority-icon {
+        font-size: 18px;
+    }
+    
+    .scso-copy-notification {
+        font-size: 11px;
+        padding: 5px 10px;
+    }
+}
+
+/* =========================================
+   PRINT STYLES
+   ========================================= */
+
+@media print {
+    .scso-keywords-toggle {
+        display: none;
+    }
+    
+    .scso-keywords-list {
+        display: block !important;
+        background: white;
+        border: 1px solid #ddd;
+    }
+    
+    .scso-keywords-table {
+        color: #000;
+    }
+    
+    .scso-keywords-table th {
+        background: #f0f0f0;
+        color: #000;
+    }
+}
+
+/* =========================================
+   ACCESSIBILITY: HIGH CONTRAST MODE
+   ========================================= */
+
+@media (prefers-contrast: high) {
+    .scso-kw-badge {
+        border-width: 2px;
+    }
+    
+    .scso-keywords-table {
+        border: 2px solid rgba(255, 255, 255, 0.5);
+    }
+    
+    .scso-priority-keyword {
+        border-width: 3px;
+    }
+}
+
+/* =========================================
+   ACCESSIBILITY: REDUCED MOTION
+   ========================================= */
+
+@media (prefers-reduced-motion: reduce) {
+    .scso-keywords-toggle,
+    .scso-keyword-text,
+    .scso-kw-badge,
+    .scso-ctr-indicator,
+    .scso-priority-keyword {
+        transition: none;
+        animation: none;
+    }
+    
+    .scso-keywords-list {
+        transition: none;
+    }
 }

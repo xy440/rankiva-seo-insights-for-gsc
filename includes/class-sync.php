@@ -1,4 +1,14 @@
 <?php
+/**
+ * Google Search Console Sync Handler.
+ *
+ * Handles syncing page-level and keyword-level data from GSC.
+ *
+ * @package Rankiva
+ * @since 1.0.0
+ * @since 1.1.0 Added keyword-level sync
+ */
+
 if (!defined('ABSPATH')) exit;
 
 class SCSO_GSC_Sync {
@@ -26,7 +36,6 @@ class SCSO_GSC_Sync {
      * Log message only if WP_DEBUG and WP_DEBUG_LOG are enabled
      */
     private function log($message, $is_error = false) {
-        // Only log when WordPress debugging is explicitly enabled
         if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
             $prefix = $is_error ? 'SCSO ERROR: ' : 'SCSO: ';
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -51,6 +60,7 @@ class SCSO_GSC_Sync {
         update_option(self::STATE_KEY, [
             'started_at' => time(),
             'processed'  => 0,
+            'keywords'   => 0,
             'done'       => false,
             'error'      => null,
         ], false);
@@ -73,6 +83,7 @@ class SCSO_GSC_Sync {
         wp_send_json_success([
             'done'      => ! empty($state['done']),
             'processed' => $state['processed'] ?? 0,
+            'keywords'  => $state['keywords'] ?? 0,
             'error'     => $state['error'] ?? null,
         ]);
     }
@@ -121,29 +132,32 @@ class SCSO_GSC_Sync {
 
         // STEP 4: Check if we can skip sync
         $has_previous_error = get_transient('scso_sync_error');
-        if ($stored_binding && hash_equals($stored_binding, $new_binding) && $this->db->has_data() && !$has_previous_error) {
-            update_option('scso_gsc_property', $property, false);
-            update_option('scso_last_sync_time', current_time('mysql'), false);
-            delete_transient('scso_sync_error');
-            $this->db->clear_caches();
+        $last_sync_time = get_option('scso_last_sync_time');
+        $hours_since_sync = $last_sync_time ? (time() - strtotime($last_sync_time)) / 3600 : 999;
+        $min_hours_between_syncs = 24; // Only allow sync once per 24 hours
+
+        if (!$has_previous_error && $stored_binding && hash_equals($stored_binding, $new_binding) && $this->db->has_data() && $hours_since_sync < $min_hours_between_syncs) {
+            // Skip sync - too recent
             $this->finish();
             return;
         }
 
-        // STEP 5: Perform actual sync
-        $synced = $this->sync_data($token, $property);
+        // STEP 5: Perform actual sync (pages + keywords)
+        $result = $this->sync_data($token, $property);
 
         // STEP 6: Update options
-        update_option('scso_gsc_property', $property, false);
-        update_option('scso_gsc_binding', $new_binding, false);
-        update_option('scso_last_sync_time', current_time('mysql'), false);
+        update_option('scso_gsc_property', $property);
+        update_option('scso_gsc_binding', $new_binding);
+        update_option('scso_last_sync_time', current_time('mysql'));
+        wp_cache_delete('alloptions', 'options');
 
         $state = get_option(self::STATE_KEY, []);
-        $state['processed'] = $synced;
+        $state['processed'] = $result['pages'];
+        $state['keywords']  = $result['keywords'];
         update_option(self::STATE_KEY, $state, false);
 
         // STEP 7: Handle results
-        if ($synced === 0) {
+        if ($result['pages'] === 0) {
             $error_msg = 'Sync completed successfully, but no matching posts were found. This usually means your posts don\'t have any impressions in Google Search Console yet, or there may be a URL structure mismatch between WordPress and GSC.';
             set_transient('scso_sync_error', $error_msg, 300);
             $this->db->clear_caches();
@@ -159,8 +173,19 @@ class SCSO_GSC_Sync {
         global $wpdb;
         // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->query( "TRUNCATE TABLE `{$this->table}`" );
+        
+        // Also clear keywords table
+        $this->db->clear_keywords();
     }
 
+    /**
+     * Sync both page-level and keyword-level data.
+     *
+     * @since 1.1.0
+     * @param string $token    Access token.
+     * @param string $property GSC property.
+     * @return array ['pages' => int, 'keywords' => int]
+     */
     private function sync_data($token, $property) {
         global $wpdb;
 
@@ -177,7 +202,7 @@ class SCSO_GSC_Sync {
 
         if (empty($posts)) {
             $this->log('No published content found for post types: ' . implode(', ', (array)$post_types));
-            return 0;
+            return ['pages' => 0, 'keywords' => 0];
         }
 
         // Build flexible URL map
@@ -188,14 +213,15 @@ class SCSO_GSC_Sync {
             $url_map[$normalized] = $post_id;
         }
 
-        // Fetch data from GSC
+        // STEP 1: Fetch page-level data from GSC
         $rows = $this->fetch_gsc_data($token, $property);
 
         if (empty($rows)) {
-            return 0;
+            return ['pages' => 0, 'keywords' => 0];
         }
 
-        $synced = 0;
+        $synced_pages = 0;
+        $synced_urls = []; // Track which URLs we synced for keyword lookup
 
         foreach ($rows as $row) {
             if (empty($row['keys'][0])) continue;
@@ -217,10 +243,145 @@ class SCSO_GSC_Sync {
             ];
 
             $this->store_metrics($post_id, $gsc_url, $data);
-            $synced++;
+            $synced_urls[$gsc_url] = $post_id;
+            $synced_pages++;
         }
 
-        return $synced;
+        // STEP 2: Fetch keyword-level data for synced pages
+        $synced_keywords = 0;
+        
+        if (!empty($synced_urls)) {
+            $synced_keywords = $this->sync_keywords($token, $property, $synced_urls);
+        }
+
+        return [
+            'pages'    => $synced_pages,
+            'keywords' => $synced_keywords,
+        ];
+    }
+
+    /**
+     * Sync keyword-level data from GSC.
+     *
+     * @since 1.1.0
+     * @param string $token       Access token.
+     * @param string $property    GSC property.
+     * @param array  $synced_urls Array of [url => post_id] that were synced.
+     * @return int Number of keywords synced.
+     */
+    private function sync_keywords($token, $property, $synced_urls) {
+        // Fetch query-level data (page + query dimensions)
+        $keyword_rows = $this->fetch_gsc_keywords($token, $property);
+
+        if (empty($keyword_rows)) {
+            $this->log('No keyword data returned from GSC');
+            return 0;
+        }
+
+        $this->log('Fetched ' . count($keyword_rows) . ' keyword rows from GSC');
+
+        // Group keywords by URL
+        $keywords_by_url = [];
+
+        foreach ($keyword_rows as $row) {
+            if (empty($row['keys'][0]) || empty($row['keys'][1])) {
+                continue;
+            }
+
+            $url = $row['keys'][0];
+            $keyword = $row['keys'][1];
+
+            if (!isset($keywords_by_url[$url])) {
+                $keywords_by_url[$url] = [];
+            }
+
+            $keywords_by_url[$url][] = [
+                'keyword'     => $keyword,
+                'impressions' => (int) $row['impressions'],
+                'clicks'      => (int) $row['clicks'],
+                'ctr'         => round($row['ctr'] * 100, 2),
+                'position'    => round($row['position'], 2),
+            ];
+        }
+
+        // Store keywords for each synced URL
+        $total_keywords = 0;
+
+        foreach ($synced_urls as $url => $post_id) {
+            // Try exact match first
+            $url_keywords = $keywords_by_url[$url] ?? [];
+
+            // If no exact match, try normalized matching
+            if (empty($url_keywords)) {
+                $normalized = $this->normalize_url($url);
+                foreach ($keywords_by_url as $kw_url => $kw_data) {
+                    if ($this->normalize_url($kw_url) === $normalized) {
+                        $url_keywords = $kw_data;
+                        break;
+                    }
+                }
+            }
+
+            if (!empty($url_keywords)) {
+                // Sort by impressions descending
+                usort($url_keywords, function($a, $b) {
+                    return $b['impressions'] - $a['impressions'];
+                });
+
+                // Store top 10 keywords per page
+                $this->db->store_keywords($post_id, $url_keywords);
+                $total_keywords += min(count($url_keywords), 10);
+            }
+        }
+
+        $this->log('Stored keywords for ' . count($synced_urls) . ' pages, total: ' . $total_keywords);
+
+        return $total_keywords;
+    }
+
+    /**
+     * Fetch keyword-level data from GSC API.
+     *
+     * @since 1.1.0
+     * @param string $token    Access token.
+     * @param string $property GSC property.
+     * @return array
+     */
+    private function fetch_gsc_keywords($token, $property) {
+        $body = [
+            'startDate'  => gmdate('Y-m-d', strtotime('-90 days')),
+            'endDate'    => gmdate('Y-m-d', strtotime('-3 days')),
+            'dimensions' => ['page', 'query'], // Page + Query for keyword-level data
+            'rowLimit'   => 25000,
+        ];
+
+        $response = wp_remote_post(
+            'https://www.googleapis.com/webmasters/v3/sites/' . rawurlencode($property) . '/searchAnalytics/query',
+            [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $token,
+                    'Content-Type'  => 'application/json',
+                ],
+                'body'    => wp_json_encode($body),
+                'timeout' => 120, // Longer timeout for keyword data
+            ]
+        );
+
+        if (is_wp_error($response)) {
+            $this->log('GSC Keywords API request failed: ' . $response->get_error_message(), true);
+            return [];
+        }
+
+        $http_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        if ($http_code !== 200) {
+            $this->log('GSC Keywords API returned HTTP ' . $http_code . ': ' . $response_body, true);
+            return [];
+        }
+
+        $data = json_decode($response_body, true);
+        return $data['rows'] ?? [];
     }
 
     private function normalize_url($url) {
@@ -232,12 +393,9 @@ class SCSO_GSC_Sync {
     }
 
     private function fetch_gsc_data($token, $property) {
-        $start_date = gmdate('Y-m-d', strtotime('-90 days'));
-        $end_date = gmdate('Y-m-d');
-        
         $body = [
-            'startDate'  => $start_date,
-            'endDate'    => $end_date,
+            'startDate'  => gmdate('Y-m-d', strtotime('-90 days')),
+            'endDate'    => gmdate('Y-m-d', strtotime('-3 days')),
             'dimensions' => ['page'],
             'rowLimit'   => 25000,
         ];

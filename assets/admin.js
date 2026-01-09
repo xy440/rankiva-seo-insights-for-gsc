@@ -74,8 +74,8 @@ jQuery(function ($) {
                 } else {
                     progressText.text('Sync completed! Processed ' + processed + ' posts.');
                     $('.scso-sync-trigger')
-                        .prop('disabled', false)
-                        .html('<span class="dashicons dashicons-update"></span> Sync Now');
+                        .prop('disabled', true)
+                        .text('✓ Redirecting...');
                     setTimeout(function() { location.reload(); }, 1500);
                 }
             } else {
@@ -123,6 +123,7 @@ jQuery(function ($) {
         }).always(function() { location.reload(); });
     });
 
+    // Posts per page dropdown
     $(document).on('change', '[data-scso-per-page]', function () {
         const url = $(this).val();
 
@@ -194,5 +195,264 @@ jQuery(function ($) {
     if ($proxyRadio.length || $customRadio.length) {
         updateOAuthSelection();
     }
+
+
+
+    // =========================================================
+    // KEYWORDS TOGGLE FUNCTIONALITY
+    // =========================================================
+    
+    $(document).on('click', '.scso-keywords-toggle', function(e) {
+        e.preventDefault();
+        
+        const $toggle = $(this);
+        const $list = $toggle.next('.scso-keywords-list');
+        const isExpanded = $toggle.attr('aria-expanded') === 'true';
+        
+        if (isExpanded) {
+            // Collapse
+            $list.slideUp(250, 'swing');
+            $toggle.attr('aria-expanded', 'false');
+        } else {
+            // Expand
+            $list.slideDown(250, 'swing');
+            $toggle.attr('aria-expanded', 'true');
+            
+            // Track expansion (optional analytics)
+            if (typeof gtag !== 'undefined') {
+                gtag('event', 'keywords_expanded', {
+                    event_category: 'engagement',
+                    event_label: 'Keywords Section'
+                });
+            }
+        }
+    });
+
+    // =========================================================
+    // KEYBOARD SHORTCUTS
+    // =========================================================
+    
+    // Alt + K: Toggle all keywords sections
+    $(document).on('keydown', function(e) {
+        if (e.altKey && e.keyCode === 75) {
+            e.preventDefault();
+            
+            const $toggles = $('.scso-keywords-toggle');
+            const anyExpanded = $toggles.filter('[aria-expanded="true"]').length > 0;
+            
+            $toggles.each(function() {
+                const $toggle = $(this);
+                const $list = $toggle.next('.scso-keywords-list');
+                
+                if (anyExpanded) {
+                    // Collapse all
+                    $list.slideUp(200);
+                    $toggle.attr('aria-expanded', 'false');
+                } else {
+                    // Expand all
+                    $list.slideDown(200);
+                    $toggle.attr('aria-expanded', 'true');
+                }
+            });
+        }
+    });
+
+    // =========================================================
+    // ENHANCED TOOLTIPS FOR METRICS
+    // =========================================================
+    
+    // Add tooltips to keyword metrics on hover
+    $('.scso-keywords-table tbody tr').each(function() {
+        const $row = $(this);
+        
+        // Add click-to-copy functionality for keywords
+        $row.find('.scso-keyword-text').on('click', function(e) {
+            if (e.target.tagName !== 'SPAN') { // Don't trigger on badge click
+                const keyword = $(this).text().trim();
+                const cleanKeyword = keyword.replace(/^(BEST|GREAT|GOOD|LOW)\s+/, '');
+                
+                copyToClipboard(cleanKeyword);
+                showCopyNotification($(this));
+            }
+        });
+    });
+
+    // =========================================================
+    // COPY TO CLIPBOARD HELPER
+    // =========================================================
+    
+    function copyToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(function() {
+                console.log('Keyword copied:', text);
+            }).catch(function(err) {
+                console.error('Copy failed:', err);
+            });
+        } else {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                document.execCommand('copy');
+                console.log('Keyword copied (fallback):', text);
+            } catch (err) {
+                console.error('Copy failed:', err);
+            }
+            
+            document.body.removeChild(textArea);
+        }
+    }
+
+    // =========================================================
+    // COPY NOTIFICATION
+    // =========================================================
+    
+    function showCopyNotification($element) {
+        const $notification = $('<span class="scso-copy-notification">✓ Copied</span>');
+        
+        $element.css('position', 'relative');
+        $element.append($notification);
+        
+        setTimeout(function() {
+            $notification.fadeOut(300, function() {
+                $(this).remove();
+            });
+        }, 1500);
+    }
+
+    // =========================================================
+    // HIGHLIGHT PRIORITY KEYWORD
+    // =========================================================
+    
+    // Add subtle pulse animation to priority keyword
+    $('.scso-priority-keyword').each(function() {
+        const $priority = $(this);
+        
+        // Add hover effect
+        $priority.on('mouseenter', function() {
+            $(this).css('transform', 'translateX(5px)');
+        }).on('mouseleave', function() {
+            $(this).css('transform', 'translateX(0)');
+        });
+    });
+
+    // =========================================================
+    // TABLE ROW INTERACTIONS
+    // =========================================================
+    
+    // Highlight row on hover with smooth transition
+    $('.scso-keywords-table tbody tr').hover(
+        function() {
+            $(this).find('td').css('background', 'rgba(255, 255, 255, 0.08)');
+        },
+        function() {
+            $(this).find('td').css('background', '');
+        }
+    );
+
+    // =========================================================
+    // SORT FUNCTIONALITY (OPTIONAL)
+    // =========================================================
+    
+    // Add click-to-sort on table headers
+    $('.scso-keywords-table th').on('click', function() {
+        const $th = $(this);
+        const $table = $th.closest('table');
+        const columnIndex = $th.index();
+        const $tbody = $table.find('tbody');
+        const $rows = $tbody.find('tr').toArray();
+        
+        const isAscending = $th.hasClass('sort-asc');
+        
+        // Remove sort classes from all headers
+        $table.find('th').removeClass('sort-asc sort-desc');
+        
+        // Sort rows
+        $rows.sort(function(a, b) {
+            const aValue = $(a).find('td').eq(columnIndex).text().trim();
+            const bValue = $(b).find('td').eq(columnIndex).text().trim();
+            
+            // Try to parse as numbers
+            const aNum = parseFloat(aValue.replace(/[^0-9.-]/g, ''));
+            const bNum = parseFloat(bValue.replace(/[^0-9.-]/g, ''));
+            
+            if (!isNaN(aNum) && !isNaN(bNum)) {
+                return isAscending ? bNum - aNum : aNum - bNum;
+            }
+            
+            // String comparison
+            return isAscending 
+                ? bValue.localeCompare(aValue)
+                : aValue.localeCompare(bValue);
+        });
+        
+        // Apply new sort order
+        $tbody.html($rows);
+        
+        // Toggle sort direction
+        $th.addClass(isAscending ? 'sort-desc' : 'sort-asc');
+    });
+
+    // =========================================================
+    // ACCESSIBILITY ENHANCEMENTS
+    // =========================================================
+    
+    // Add aria labels for better screen reader support
+    $('.scso-keywords-table').attr('role', 'table');
+    $('.scso-keywords-table thead').attr('role', 'rowgroup');
+    $('.scso-keywords-table tbody').attr('role', 'rowgroup');
+    $('.scso-keywords-table tr').attr('role', 'row');
+    $('.scso-keywords-table th').attr('role', 'columnheader');
+    $('.scso-keywords-table td').attr('role', 'cell');
+
+    // =========================================================
+    // AUTO-EXPAND FIRST OPPORTUNITY
+    // =========================================================
+    
+    // Optional: Auto-expand the first opportunity's keywords on page load
+    // Uncomment if desired:
+    /*
+    const $firstToggle = $('.scso-keywords-toggle').first();
+    if ($firstToggle.length) {
+        setTimeout(function() {
+            $firstToggle.trigger('click');
+        }, 500);
+    }
+    */
+
+    // =========================================================
+    // PERFORMANCE: LAZY LOAD KEYWORDS
+    // =========================================================
+    
+    // If you have many opportunities, you can lazy-load keywords when expanded
+    $('.scso-keywords-toggle').one('click', function() {
+        const $toggle = $(this);
+        const $list = $toggle.next('.scso-keywords-list');
+        
+        // If list is empty, you could load via AJAX here
+        if ($list.find('table tbody tr').length === 0) {
+            // Example AJAX call (implement on backend):
+            /*
+            const postId = $toggle.data('post-id');
+            $.post(scsoData.ajax_url, {
+                action: 'scso_load_keywords',
+                nonce: scsoData.nonce,
+                post_id: postId
+            }).done(function(response) {
+                if (response.success) {
+                    $list.find('table tbody').html(response.data.html);
+                }
+            });
+            */
+        }
+    });
+
+
 
 });
