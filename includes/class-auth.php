@@ -1,4 +1,14 @@
 <?php
+/**
+ * Google Search Console Authentication Handler.
+ *
+ * @package Rankiva
+ * @since 1.0.0
+ * @since 1.2.0 Added proxy token refresh support
+ * @since 1.2.0 Added site info tracking for analytics
+ * @since 1.2.4 Added admin_email to site info
+ */
+
 if (!defined('ABSPATH')) exit;
 
 class SCSO_GSC_Auth {
@@ -31,6 +41,17 @@ class SCSO_GSC_Auth {
         add_action('admin_init', [$this, 'handle_callback']);
         add_action('wp_ajax_scso_disconnect', [$this, 'ajax_disconnect']);
         add_action('admin_menu', [$this, 'add_settings_page'], 99);
+    }
+
+    /**
+     * Log message only if WP_DEBUG and WP_DEBUG_LOG are enabled
+     */
+    private function log($message, $is_error = false) {
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+            $prefix = $is_error ? 'SCSO AUTH ERROR: ' : 'SCSO AUTH: ';
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+            error_log($prefix . $message);
+        }
     }
 
     public function add_settings_page() {
@@ -113,6 +134,27 @@ class SCSO_GSC_Auth {
         }
     }
     
+    /**
+     * Get site info for analytics tracking.
+     *
+     * @since 1.2.2
+     * @since 1.2.4 Added admin_email
+     * @return array Site information.
+     */
+    private function get_site_info() {
+        global $wp_version;
+        
+        return [
+            'site_url'       => home_url(),
+            'site_name'      => get_bloginfo('name'),
+            'wp_version'     => $wp_version,
+            'php_version'    => PHP_VERSION,
+            'plugin_version' => defined('SCSO_VERSION') ? SCSO_VERSION : '1.0.0',
+            'locale'         => get_locale(),
+            'admin_email'    => get_option('admin_email'),
+        ];
+    }
+    
     private function get_proxy_connect_url() {
         $nonce = wp_create_nonce('scso_oauth_callback');
         
@@ -122,7 +164,21 @@ class SCSO_GSC_Auth {
             'nonce'  => $nonce,
         ], admin_url('admin.php'));
         
-        return $this->proxy_url . '?return_url=' . urlencode($return_url);
+        // Build proxy URL with site info
+        $site_info = $this->get_site_info();
+        
+        $proxy_params = [
+            'return_url'     => $return_url,
+            'site_url'       => $site_info['site_url'],
+            'site_name'      => $site_info['site_name'],
+            'wp_version'     => $site_info['wp_version'],
+            'php_version'    => $site_info['php_version'],
+            'plugin_version' => $site_info['plugin_version'],
+            'locale'         => $site_info['locale'],
+            'admin_email'    => $site_info['admin_email'],
+        ];
+        
+        return $this->proxy_url . '?' . http_build_query($proxy_params);
     }
     
     private function get_direct_connect_url() {
@@ -169,35 +225,34 @@ class SCSO_GSC_Auth {
 
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $nonce = isset($_GET['nonce']) ? sanitize_text_field(wp_unslash($_GET['nonce'])) : '';
-
+        
         if (!wp_verify_nonce($nonce, 'scso_oauth_callback')) {
-            wp_die(
-                esc_html__('Security check failed.', 'rankiva-seo-insights-for-gsc'),
-                esc_html__('Security Error', 'rankiva-seo-insights-for-gsc'),
-                ['response' => 403]
-            );
+            wp_die(esc_html__('Security check failed. Please try again.', 'rankiva-seo-insights-for-gsc'));
+        }
+        
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        if (isset($_GET['oauth']) && $_GET['oauth'] === 'cancelled') {
+            set_transient('scso_sync_error', __('Google authorization was cancelled.', 'rankiva-seo-insights-for-gsc'), HOUR_IN_SECONDS);
+            wp_safe_redirect(admin_url('admin.php?page=scso-opportunities'));
+            exit;
         }
 
         if ($this->use_proxy) {
             $this->handle_proxy_callback();
-        } else {
-            $this->handle_direct_callback();
+            return;
         }
-    }
-    
-    private function handle_direct_callback() {
+        
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $code = isset($_GET['code']) ? sanitize_text_field(wp_unslash($_GET['code'])) : '';
         
         if (empty($code)) {
-            wp_safe_redirect(admin_url('admin.php?page=scso-opportunities&oauth=cancelled'));
-            exit;
+            wp_die(esc_html__('Missing authorization code from Google.', 'rankiva-seo-insights-for-gsc'));
         }
         
         $tokens = $this->exchange_code_direct($code);
         
         if (!$tokens) {
-            wp_die('Failed to exchange OAuth code for tokens.');
+            wp_die(esc_html__('Failed to exchange authorization code for tokens.', 'rankiva-seo-insights-for-gsc'));
         }
         
         update_option('scso_gsc_token', $tokens, false);
@@ -278,38 +333,106 @@ class SCSO_GSC_Auth {
         exit;
     }
 
+    /**
+     * Get valid access token, refreshing if needed.
+     *
+     * @since 1.0.0
+     * @since 1.2.1 Added proxy refresh support
+     * @return string|false Access token or false if unavailable.
+     */
     public function get_access_token() {
         $token = get_option('scso_gsc_token');
         if (empty($token['access_token'])) {
+            $this->log('No access token found');
             return false;
         }
 
         $created = (int) ($token['created_at'] ?? 0);
         $expires = (int) ($token['expires_in'] ?? 3600);
 
+        // Token still valid (with 5 minute buffer)
         if (time() < ($created + $expires - 300)) {
             return $token['access_token'];
         }
 
-        if ($this->use_proxy) {
+        $this->log('Token expired, attempting refresh...');
+
+        // No refresh token available
+        if (empty($token['refresh_token'])) {
+            $this->log('No refresh token available', true);
             return false;
         }
 
-        if (!empty($token['refresh_token']) && !empty($this->client_id) && !empty($this->client_secret)) {
+        // Try to refresh
+        if ($this->use_proxy) {
+            $refreshed = $this->refresh_via_proxy($token['refresh_token']);
+        } else {
             $refreshed = $this->refresh_access_token($token['refresh_token']);
-            if ($refreshed && !empty($refreshed['access_token'])) {
-                if (empty($refreshed['refresh_token'])) {
-                    $refreshed['refresh_token'] = $token['refresh_token'];
-                }
-                $refreshed['created_at'] = time();
-                update_option('scso_gsc_token', $refreshed, false);
-                return $refreshed['access_token'];
-            }
         }
 
+        if ($refreshed && !empty($refreshed['access_token'])) {
+            if (empty($refreshed['refresh_token'])) {
+                $refreshed['refresh_token'] = $token['refresh_token'];
+            }
+            $refreshed['created_at'] = time();
+            update_option('scso_gsc_token', $refreshed, false);
+            
+            $this->log('Token refreshed successfully');
+            return $refreshed['access_token'];
+        }
+
+        $this->log('Token refresh failed', true);
         return false;
     }
 
+    /**
+     * Refresh token via proxy server.
+     *
+     * @since 1.2.1
+     * @param string $refresh_token The refresh token.
+     * @return array|false New token data or false on failure.
+     */
+    private function refresh_via_proxy($refresh_token) {
+        $refresh_url = rtrim($this->proxy_url, '/') . '/refresh.php';
+
+        $this->log('Attempting proxy refresh at: ' . $refresh_url);
+
+        $response = wp_remote_post($refresh_url, [
+            'timeout' => 30,
+            'body' => [
+                'refresh_token' => $refresh_token,
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            $this->log('Proxy refresh request failed: ' . $response->get_error_message(), true);
+            return false;
+        }
+
+        $http_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+
+        if ($http_code !== 200) {
+            $this->log('Proxy refresh returned HTTP ' . $http_code . ': ' . $body, true);
+            return false;
+        }
+
+        $tokens = json_decode($body, true);
+
+        if (empty($tokens['access_token'])) {
+            $this->log('Proxy refresh returned no access_token: ' . $body, true);
+            return false;
+        }
+
+        return $tokens;
+    }
+
+    /**
+     * Refresh token directly with Google (for custom OAuth).
+     *
+     * @param string $refresh_token The refresh token.
+     * @return array|false New token data or false on failure.
+     */
     private function refresh_access_token($refresh_token) {
         $response = wp_remote_post('https://oauth2.googleapis.com/token', [
             'timeout' => 30,
@@ -322,11 +445,7 @@ class SCSO_GSC_Auth {
         ]);
 
         if (is_wp_error($response)) {
-            // Only log when WP_DEBUG is enabled
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-                error_log('SCSO: Token refresh failed: ' . $response->get_error_message());
-            }
+            $this->log('Direct refresh failed: ' . $response->get_error_message(), true);
             return false;
         }
 
@@ -334,11 +453,7 @@ class SCSO_GSC_Auth {
         $tokens = json_decode($body, true);
 
         if (empty($tokens['access_token'])) {
-            // Only log when WP_DEBUG is enabled
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-                error_log('SCSO: Token refresh returned no access_token');
-            }
+            $this->log('Direct refresh returned no access_token', true);
             return false;
         }
 

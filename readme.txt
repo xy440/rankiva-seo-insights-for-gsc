@@ -3,16 +3,21 @@ Contributors: xy440
 Tags: seo, google search console, seo insights, ctr optimization, keyword tracking
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 Requires PHP: 7.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
-Discover SEO opportunities from Google Search Console - find keywords, track rankings, and boost CTR for posts Google already ranks.
+
+Discover SEO opportunities from Google Search Console. Find keywords, track rankings, and boost CTR for posts Google already ranks.
 
 == Description ==
 
 **Rankiva SEO & Keyword Insights for Google Search Console** is a Search Console SEO plugin that helps you grow organic traffic by showing you exactly which existing posts to update first, using real Google Search Console data.
+
+Rankiva also works as an SEO opportunity finder, helping you identify pages and keywords that are close to page 1 and need small improvements to rank higher.
+
+Turn Google Search Console data into a clear SEO dashboard inside WordPress. Find posts close to page 1, improve CTR, and grow traffic faster.
 
 Instead of guessing what to optimize, the plugin highlights pages that Google already ranks but are underperforming. These are posts with strong impressions, average positions on page 2 or low click-through rates. Small improvements to titles, content, or internal links can push them to page 1 and unlock fast traffic gains.
 
@@ -308,7 +313,17 @@ You can bypass the proxy entirely by configuring your own Google OAuth credentia
 
 == Changelog ==
 
-= 1.1.0 - 2026-01-09 =
+= 1.2.0 =
+* New: Position change tracking - see if rankings improved or dropped since last sync
+* New: Position change badges showing ▲ +3.3 or ▼ -2.1 next to each position
+* New: Two new stat cards: "Improved" and "Dropped" showing position change counts
+* New: Card border colors - green for improved rankings, red for dropped
+* New: Dynamic insight messages showing position change context
+* New: Keyword-level position tracking - see changes for each keyword
+* Improved: Database schema with prev_position and position_change columns
+* Improved: Stats now include positions_improved and positions_dropped counts
+
+= 1.1.0 =
 * New: Keyword-level insights - see top 5 keywords driving traffic to each post
 * New: Priority keyword recommendation with smart algorithm (positions 5-20)
 * New: Keyword quality badges (BEST, GREAT, GOOD, LOW) based on position
@@ -328,8 +343,8 @@ You can bypass the proxy entirely by configuring your own Google OAuth credentia
 
 == Upgrade Notice ==
 
-= 1.1.0 =
-New keyword insights! See top 5 keywords per post with priority recommendations. Run a sync after updating to fetch keyword data.
+= 1.2.0 =
+Position change tracking! See which posts improved or dropped in Google rankings since your last sync. Run a sync after updating to start tracking changes.
 
 == Privacy Policy ==
 

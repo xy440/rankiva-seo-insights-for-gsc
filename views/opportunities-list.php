@@ -11,6 +11,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * @var bool            $scso_show_snoozed
  * @var array           $scso_keywords_map  Keywords grouped by post_id (NEW in v1.1)
  * @var SCSO_Admin_Page $scso_admin
+ * 
+ * @since 1.0.0
+ * @since 1.1.0 Added keywords section
+ * @since 1.2.0 Added position change tracking
  */
 
 $scso_rows         = $rows;
@@ -79,8 +83,22 @@ if (empty($scso_rows)):
     $scso_post_keywords = isset($scso_keywords_map[$scso_row->post_id]) 
         ? $scso_keywords_map[$scso_row->post_id] 
         : [];
+
+    // Position change tracking (NEW in v1.2)
+    $scso_position_change = isset($scso_row->position_change) ? (float) $scso_row->position_change : null;
+    $scso_has_position_change = ($scso_position_change !== null && abs($scso_position_change) > 0.3);
+    $scso_position_improved = ($scso_position_change !== null && $scso_position_change > 0.3);
+    $scso_position_dropped = ($scso_position_change !== null && $scso_position_change < -0.3);
+    
+    // Card modifier class based on position change
+    $scso_card_class = 'scso-post-card';
+    if ($scso_position_improved) {
+        $scso_card_class .= ' scso-card-improved';
+    } elseif ($scso_position_dropped) {
+        $scso_card_class .= ' scso-card-dropped';
+    }
 ?>
-    <div class="scso-post-card">
+    <div class="<?php echo esc_attr($scso_card_class); ?>">
         <div class="scso-post-header">
             <div class="scso-post-score" title="Opportunity Score:  <?php echo esc_attr($scso_score); ?>/100">
                 <div class="scso-score-label"><?php esc_html_e('Score', 'rankiva-seo-insights-for-gsc'); ?></div>
@@ -101,8 +119,19 @@ if (empty($scso_rows)):
                 <div class="scso-stat-item-label">
                     <?php esc_html_e('Position', 'rankiva-seo-insights-for-gsc'); ?>
                 </div>
-                <div class="scso-stat-item-value">
+                <div class="scso-stat-item-value scso-position-with-change">
                     #<?php echo esc_html(number_format_i18n($scso_row->avg_position, 1)); ?>
+                    <?php if ($scso_has_position_change): ?>
+                        <?php if ($scso_position_improved): ?>
+                            <span class="scso-position-change scso-change-up" title="<?php esc_attr_e('Improved since last sync', 'rankiva-seo-insights-for-gsc'); ?>">
+                                ▲ +<?php echo esc_html(number_format_i18n(abs($scso_position_change), 1)); ?>
+                            </span>
+                        <?php elseif ($scso_position_dropped): ?>
+                            <span class="scso-position-change scso-change-down" title="<?php esc_attr_e('Dropped since last sync', 'rankiva-seo-insights-for-gsc'); ?>">
+                                ▼ <?php echo esc_html(number_format_i18n($scso_position_change, 1)); ?>
+                            </span>
+                        <?php endif; ?>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="scso-stat-item">
@@ -132,6 +161,43 @@ if (empty($scso_rows)):
         </div>
 
         <?php
+        // Position change insight (NEW in v1.2)
+        if ($scso_has_position_change):
+            if ($scso_position_improved):
+        ?>
+        <div class="scso-position-insight scso-insight-improved">
+            <span class="scso-insight-icon">📈</span>
+            <span>
+                <?php 
+                printf(
+                    /* translators: 1: current position, 2: position change amount */
+                    esc_html__('Ranking #%1$s, improved +%2$s positions since last sync!', 'rankiva-seo-insights-for-gsc'),
+                    esc_html(number_format_i18n($scso_row->avg_position, 1)),
+                    esc_html(number_format_i18n(abs($scso_position_change), 1))
+                );
+                ?>
+            </span>
+        </div>
+        <?php elseif ($scso_position_dropped): ?>
+        <div class="scso-position-insight scso-insight-dropped">
+            <span class="scso-insight-icon">⚠️</span>
+            <span>
+                <?php 
+                printf(
+                    /* translators: 1: current position, 2: position change amount */
+                    esc_html__('Ranking #%1$s, dropped %2$s positions since last sync. Needs attention!', 'rankiva-seo-insights-for-gsc'),
+                    esc_html(number_format_i18n($scso_row->avg_position, 1)),
+                    esc_html(number_format_i18n(abs($scso_position_change), 1))
+                );
+                ?>
+            </span>
+        </div>
+        <?php 
+            endif;
+        endif;
+        ?>
+
+        <?php
         $scso_reason = $scso_row->opportunity_reason;
         if ($scso_has_ctr_gap):
             $scso_reason = sprintf('expected %.1f%%, actual %.1f%%', $scso_expected_ctr, $scso_actual_ctr);
@@ -140,7 +206,7 @@ if (empty($scso_rows)):
             <span class="warning-icon">⚠️</span>
             <span><strong><?php esc_html_e('CTR gap:', 'rankiva-seo-insights-for-gsc'); ?></strong> <?php echo esc_html($scso_reason); ?></span>
         </div>
-        <?php else: ?>
+        <?php elseif (!$scso_has_position_change): ?>
         <div class="scso-post-insight">
             <span class="scso-insight-icon">📈</span>
             <span>
@@ -161,14 +227,10 @@ if (empty($scso_rows)):
 
         <?php 
         /**
-         * KEYWORDS SECTION (NEW in v1.1)
+         * KEYWORDS SECTION (NEW in v1.1, Enhanced in v1.2)
          * Shows top 5 keywords driving traffic to this post
+         * Now includes position change tracking for each keyword
          */
-
-/**
- * Enhanced Keywords Section for opportunities-list.php
- * Replace the existing keywords section with this improved version
- */
 
     if (!empty($scso_post_keywords)): 
         // Find the BEST priority keyword (not just highest impressions)
@@ -208,6 +270,7 @@ if (empty($scso_rows)):
 <?php if ($scso_priority_kw && (float) $scso_priority_kw->avg_position <= 20):
     $scso_priority_pos = (float) $scso_priority_kw->avg_position;
     $scso_priority_ctr = (float) $scso_priority_kw->ctr;
+    $scso_priority_change = isset($scso_priority_kw->position_change) ? (float) $scso_priority_kw->position_change : null;
     $scso_expected_ctr = scso_expected_ctr($scso_priority_pos);
 ?>
 <div class="scso-priority-keyword">
@@ -216,6 +279,13 @@ if (empty($scso_rows)):
     <span class="scso-priority-text">
         <?php esc_html_e('Optimize this page for', 'rankiva-seo-insights-for-gsc'); ?>
         <strong>#<?php echo esc_html(number_format_i18n($scso_priority_pos, 1)); ?></strong>
+        <?php if ($scso_priority_change !== null && abs($scso_priority_change) > 0.3): ?>
+            <?php if ($scso_priority_change > 0): ?>
+                <span class="scso-kw-change-up">↑<?php echo esc_html(number_format_i18n(abs($scso_priority_change), 1)); ?></span>
+            <?php else: ?>
+                <span class="scso-kw-change-down">↓<?php echo esc_html(number_format_i18n(abs($scso_priority_change), 1)); ?></span>
+            <?php endif; ?>
+        <?php endif; ?>
         "<?php echo esc_html($scso_priority_kw->keyword); ?>",
         <?php echo esc_html(number_format_i18n($scso_priority_kw->clicks)); ?> <?php esc_html_e('clicks and', 'rankiva-seo-insights-for-gsc'); ?>
         <span class="scso-priority-ctr">📊 <?php echo esc_html(number_format_i18n($scso_priority_ctr, 1)); ?>% CTR</span>
@@ -248,6 +318,8 @@ if (empty($scso_rows)):
                     $scso_kw_pos = (float) $scso_kw->avg_position;
                     $scso_kw_ctr = (float) $scso_kw->ctr;
                     $scso_kw_impr = (int) $scso_kw->impressions;
+                    $scso_kw_change = isset($scso_kw->position_change) ? (float) $scso_kw->position_change : null;
+                    $scso_kw_has_change = ($scso_kw_change !== null && abs($scso_kw_change) > 0.3);
                     
                     // Determine keyword quality badge
                     $scso_badge_class = '';
@@ -302,6 +374,13 @@ if (empty($scso_rows)):
                         <span class="<?php echo esc_attr($scso_pos_class); ?>" title="<?php echo esc_attr($scso_pos_tip); ?>">
                             #<?php echo esc_html(number_format_i18n($scso_kw_pos, 1)); ?>
                         </span>
+                        <?php if ($scso_kw_has_change): ?>
+                            <?php if ($scso_kw_change > 0): ?>
+                                <span class="scso-kw-change-up" title="<?php esc_attr_e('Improved', 'rankiva-seo-insights-for-gsc'); ?>">↑<?php echo esc_html(number_format_i18n(abs($scso_kw_change), 1)); ?></span>
+                            <?php else: ?>
+                                <span class="scso-kw-change-down" title="<?php esc_attr_e('Dropped', 'rankiva-seo-insights-for-gsc'); ?>">↓<?php echo esc_html(number_format_i18n(abs($scso_kw_change), 1)); ?></span>
+                            <?php endif; ?>
+                        <?php endif; ?>
                     </td>
                     <td class="scso-keyword-impr" 
                         title="<?php esc_attr_e('Number of times this keyword appeared in search results', 'rankiva-seo-insights-for-gsc'); ?>">

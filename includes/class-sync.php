@@ -7,6 +7,8 @@
  * @package Rankiva
  * @since 1.0.0
  * @since 1.1.0 Added keyword-level sync
+ * @since 1.2.0 Added position change tracking
+ * @since 1.2.0 Fixed sync not running due to WP Cron issues
  */
 
 if (!defined('ABSPATH')) exit;
@@ -65,8 +67,13 @@ class SCSO_GSC_Sync {
             'error'      => null,
         ], false);
 
+        // Schedule cron as backup
         wp_schedule_single_event(time(), 'scso_run_sync_batch');
         spawn_cron();
+
+        // ALSO run sync directly to bypass unreliable WP Cron
+        // This ensures sync actually happens
+        $this->run_sync();
 
         wp_send_json_success(['started' => true]);
     }
@@ -89,11 +96,18 @@ class SCSO_GSC_Sync {
     }
 
     public function run_sync() {
+        // Prevent double execution
+        static $already_running = false;
+        if ($already_running) {
+            return;
+        }
+        $already_running = true;
+
         // STEP 1: Get access token
         $token = $this->auth->get_access_token();
         if (!$token) {
             $error_msg = 'Unable to retrieve access token. Your session may have expired. Please disconnect and reconnect your Google Search Console account.';
-            set_transient('scso_sync_error', $error_msg, 300);
+            set_transient('scso_sync_error', $error_msg, HOUR_IN_SECONDS); // Longer TTL
             $this->log('Failed to get access token', true);
             $this->finish($error_msg);
             return;
@@ -108,7 +122,7 @@ class SCSO_GSC_Sync {
                 $site_url
             );
 
-            set_transient('scso_sync_error', $error_msg, 300);
+            set_transient('scso_sync_error', $error_msg, HOUR_IN_SECONDS);
             $this->log('Property detection failed for: ' . $site_url, true);
             $this->finish($error_msg);
             return;
@@ -130,26 +144,39 @@ class SCSO_GSC_Sync {
             $this->clear_all_data();
         }
 
-        // STEP 4: Check if we can skip sync
-        $has_previous_error = get_transient('scso_sync_error');
-        $last_sync_time = get_option('scso_last_sync_time');
-        $hours_since_sync = $last_sync_time ? (time() - strtotime($last_sync_time)) / 3600 : 999;
-        $min_hours_between_syncs = 24; // Only allow sync once per 24 hours
+        // STEP 4: Check if we can skip sync (rate limit)
+        // Skip this check if user explicitly requested Re-Sync
+        // Nonce is verified in ajax_start_sync() which calls this method
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $force_sync = isset( $_POST['action'] ) && 'scso_sync_start' === $_POST['action'];
+        
+        if (!$force_sync) {
+            $has_previous_error = get_transient('scso_sync_error');
+            $last_sync_time = get_option('scso_last_sync_time');
+            $hours_since_sync = $last_sync_time ? (time() - strtotime($last_sync_time)) / 3600 : 999;
+            $min_hours_between_syncs = 24;
 
-        if (!$has_previous_error && $stored_binding && hash_equals($stored_binding, $new_binding) && $this->db->has_data() && $hours_since_sync < $min_hours_between_syncs) {
-            // Skip sync - too recent
-            $this->finish();
-            return;
+            if (!$has_previous_error && $stored_binding && hash_equals($stored_binding, $new_binding) && $this->db->has_data() && $hours_since_sync < $min_hours_between_syncs) {
+                $this->log('Skipping sync - too recent (' . round($hours_since_sync, 1) . ' hours ago)');
+                $this->finish();
+                return;
+            }
         }
 
         // STEP 5: Perform actual sync (pages + keywords)
         $result = $this->sync_data($token, $property);
 
-        // STEP 6: Update options
+        // STEP 6: Update options - ALWAYS update last_sync_time after successful sync
         update_option('scso_gsc_property', $property);
         update_option('scso_gsc_binding', $new_binding);
         update_option('scso_last_sync_time', current_time('mysql'));
+        
+        // Clear all caches aggressively
         wp_cache_delete('alloptions', 'options');
+        wp_cache_flush();
+        
+        // Also delete the option from object cache directly
+        wp_cache_delete('scso_last_sync_time', 'options');
 
         $state = get_option(self::STATE_KEY, []);
         $state['processed'] = $result['pages'];
@@ -159,7 +186,7 @@ class SCSO_GSC_Sync {
         // STEP 7: Handle results
         if ($result['pages'] === 0) {
             $error_msg = 'Sync completed successfully, but no matching posts were found. This usually means your posts don\'t have any impressions in Google Search Console yet, or there may be a URL structure mismatch between WordPress and GSC.';
-            set_transient('scso_sync_error', $error_msg, 300);
+            set_transient('scso_sync_error', $error_msg, HOUR_IN_SECONDS);
             $this->db->clear_caches();
             $this->finish($error_msg);
         } else {
@@ -328,7 +355,7 @@ class SCSO_GSC_Sync {
                     return $b['impressions'] - $a['impressions'];
                 });
 
-                // Store top 10 keywords per page
+                // Store top 10 keywords per page (position change tracking handled in DB class)
                 $this->db->store_keywords($post_id, $url_keywords);
                 $total_keywords += min(count($url_keywords), 10);
             }
@@ -429,10 +456,26 @@ class SCSO_GSC_Sync {
         return $data['rows'] ?? [];
     }
 
+    /**
+     * Store metrics with position change tracking.
+     *
+     * @since 1.0.0
+     * @since 1.2.0 Added position change tracking
+     */
     private function store_metrics($post_id, $url, $data) {
         global $wpdb;
 
         $score = $this->calculate_score($data);
+        $new_position = (float) $data['position'];
+
+        // Get previous position before updating (NEW in v1.2)
+        $prev_position = $this->db->get_previous_position($post_id);
+        
+        // Calculate position change (positive = improved, negative = dropped)
+        $position_change = null;
+        if ($prev_position !== null) {
+            $position_change = round($prev_position - $new_position, 2);
+        }
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->replace(
@@ -442,7 +485,9 @@ class SCSO_GSC_Sync {
                 'url'                => $url,
                 'impressions'        => $data['impressions'],
                 'clicks'             => $data['clicks'],
-                'avg_position'       => $data['position'],
+                'avg_position'       => $new_position,
+                'prev_position'      => $prev_position,
+                'position_change'    => $position_change,
                 'ctr'                => $data['ctr'],
                 'opportunity_score'  => $score['score'],
                 'opportunity_reason' => $score['reason'],
@@ -518,114 +563,58 @@ class SCSO_GSC_Sync {
         $home_normalized = $this->normalize_url(home_url());
 
         // STEP 1: Collect all matching properties
-        $matching_properties = [];
-        
+        $candidates = [];
+
         foreach ($data['siteEntry'] as $site) {
             $site_url = $site['siteUrl'];
-            $site_normalized = preg_replace('#^sc-domain:#', '', $site_url);
-            $site_normalized = $this->normalize_url($site_normalized);
+            $perm     = $site['permissionLevel'] ?? 'unknown';
+            $type     = strpos($site_url, 'sc-domain:') === 0 ? 'domain' : 'url';
 
-            if ($home_normalized === $site_normalized ||
-                strpos($home_normalized, $site_normalized) === 0 ||
-                strpos($site_normalized, $home_normalized) === 0) {
-                $matching_properties[] = $site_url;
+            // Normalize GSC URL
+            $site_normalized = $this->normalize_url(str_replace('sc-domain:', '', $site_url));
+
+            // Check if it matches our home URL
+            if ($site_normalized === $home_normalized || strpos($home_normalized, $site_normalized) === 0) {
+                $candidates[] = [
+                    'url'        => $site_url,
+                    'type'       => $type,
+                    'permission' => $perm,
+                ];
             }
         }
 
-        if (empty($matching_properties)) {
-            $this->log('No matching property found for: ' . home_url(), true);
+        if (empty($candidates)) {
+            $this->log('No matching properties found for: ' . $home_normalized, true);
             return false;
         }
 
-        // STEP 2: If multiple matches, prefer the one with data
-        if (count($matching_properties) > 1) {
-            $property_with_data = $this->find_property_with_data($token, $matching_properties);
-            
-            if ($property_with_data) {
-                return $property_with_data;
+        // STEP 2: Prioritize - prefer domain property, then URL prefix
+        usort($candidates, function($a, $b) {
+            // Domain properties first
+            if ($a['type'] !== $b['type']) {
+                return $a['type'] === 'domain' ? -1 : 1;
             }
-            
-            // Fallback: prefer HTTPS over HTTP, non-www over www
-            return $this->prefer_best_property($matching_properties);
-        }
+            // Then by permission level (siteOwner > siteFullUser > etc)
+            $perms = ['siteOwner' => 3, 'siteFullUser' => 2, 'siteRestrictedUser' => 1];
+            $perm_a = $perms[$a['permission']] ?? 0;
+            $perm_b = $perms[$b['permission']] ?? 0;
+            return $perm_b - $perm_a;
+        });
 
-        return $matching_properties[0];
-    }
+        $best_match = $candidates[0]['url'];
+        $this->log('Selected property: ' . $best_match . ' from ' . count($candidates) . ' candidates');
 
-    private function find_property_with_data($token, $properties) {
-        foreach ($properties as $property) {
-            $body = [
-                'startDate'  => gmdate('Y-m-d', strtotime('-7 days')),
-                'endDate'    => gmdate('Y-m-d'),
-                'dimensions' => ['page'],
-                'rowLimit'   => 1,
-            ];
-
-            $response = wp_remote_post(
-                'https://www.googleapis.com/webmasters/v3/sites/' . rawurlencode($property) . '/searchAnalytics/query',
-                [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $token,
-                        'Content-Type'  => 'application/json',
-                    ],
-                    'body'    => wp_json_encode($body),
-                    'timeout' => 10,
-                ]
-            );
-
-            if (is_wp_error($response)) {
-                continue;
-            }
-
-            $http_code = wp_remote_retrieve_response_code($response);
-            if ($http_code !== 200) {
-                continue;
-            }
-
-            $data = json_decode(wp_remote_retrieve_body($response), true);
-            
-            if (!empty($data['rows'])) {
-                return $property;
-            }
-        }
-
-        return false;
-    }
-
-    private function prefer_best_property($properties) {
-        $https_no_www = [];
-        $https_www = [];
-        $http_no_www = [];
-        $http_www = [];
-        
-        foreach ($properties as $property) {
-            $is_https = strpos($property, 'https://') === 0;
-            $has_www = strpos($property, '://www.') !== false;
-            
-            if ($is_https && !$has_www) {
-                $https_no_www[] = $property;
-            } elseif ($is_https && $has_www) {
-                $https_www[] = $property;
-            } elseif (!$is_https && !$has_www) {
-                $http_no_www[] = $property;
-            } else {
-                $http_www[] = $property;
-            }
-        }
-        
-        if (!empty($https_no_www)) return $https_no_www[0];
-        if (!empty($https_www)) return $https_www[0];
-        if (!empty($http_no_www)) return $http_no_www[0];
-        if (!empty($http_www)) return $http_www[0];
-        
-        return $properties[0];
+        return $best_match;
     }
 
     private function finish($error = null) {
         $state = get_option(self::STATE_KEY, []);
         $state['done'] = true;
-        $state['finished_at'] = time();
-        $state['error'] = $error;
+        
+        if ($error) {
+            $state['error'] = $error;
+        }
+        
         update_option(self::STATE_KEY, $state, false);
         delete_transient(self::LOCK_KEY);
     }

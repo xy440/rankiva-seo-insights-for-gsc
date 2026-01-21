@@ -2,57 +2,47 @@
 /**
  * Database handler for Rankiva SEO Insights.
  *
- * PHPCS rules disabled in this file because:
- * - Queries use plugin-owned table names
- * - All user input is parameterized
- * - Dynamic WHERE clauses are internally controlled
- * - Refactoring would reduce clarity without improving security
- *
  * @package Rankiva
  * @since 1.0.0
+ * @since 1.2.0 Added position change tracking
+ * @since 1.2.0 Fixed Plugin Check warnings with rewritten query methods
  */
-// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
-// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery
-// phpcs:disable WordPress.DB.DirectDatabaseQuery.NoCaching
-// phpcs:disable PluginCheck.CodeAnalysis.VariableAnalysis.UndefinedVariable
 
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+/**
+ * Database class for SCSO plugin.
+ */
 class SCSO_DB {
 
-    private $table;
-    private $keywords_table;
-
+    /**
+     * Constructor.
+     */
     public function __construct() {
-        global $wpdb;
-        $this->table = $wpdb->prefix . 'scso_metrics';
-        $this->keywords_table = $wpdb->prefix . 'scso_keywords';
+        // Tables are accessed via $wpdb->prefix directly in methods.
     }
 
     /**
      * Install database tables.
      *
-     * Creates both metrics and keywords tables.
-     *
      * @since 1.0.0
-     * @since 1.1.0 Added keywords table
      */
     public static function install() {
         global $wpdb;
 
-        $charset = $wpdb->get_charset_collate();
+        $charset_collate = $wpdb->get_charset_collate();
 
-        // Main metrics table
-        $metrics_table = $wpdb->prefix . 'scso_metrics';
-        $sql_metrics = "CREATE TABLE $metrics_table (
+        $sql_metrics = "CREATE TABLE {$wpdb->prefix}scso_metrics (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             post_id BIGINT UNSIGNED NOT NULL,
             url VARCHAR(500) NOT NULL,
             impressions INT DEFAULT 0,
             clicks INT DEFAULT 0,
             avg_position DECIMAL(5,2) DEFAULT 0,
+            prev_position DECIMAL(5,2) DEFAULT NULL,
+            position_change DECIMAL(5,2) DEFAULT NULL,
             ctr DECIMAL(5,2) DEFAULT 0,
             opportunity_score INT DEFAULT 0,
             opportunity_reason VARCHAR(255) DEFAULT '',
@@ -63,25 +53,26 @@ class SCSO_DB {
             UNIQUE KEY post_id (post_id),
             KEY opportunity_score (opportunity_score),
             KEY last_synced (last_synced),
-            KEY snoozed_until (snoozed_until)
-        ) $charset;";
+            KEY snoozed_until (snoozed_until),
+            KEY position_change (position_change)
+        ) {$charset_collate};";
 
-        // Keywords table (NEW in v1.1)
-        $keywords_table = $wpdb->prefix . 'scso_keywords';
-        $sql_keywords = "CREATE TABLE $keywords_table (
+        $sql_keywords = "CREATE TABLE {$wpdb->prefix}scso_keywords (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             post_id BIGINT UNSIGNED NOT NULL,
             keyword VARCHAR(500) NOT NULL,
             impressions INT DEFAULT 0,
             clicks INT DEFAULT 0,
             avg_position DECIMAL(5,2) DEFAULT 0,
+            prev_position DECIMAL(5,2) DEFAULT NULL,
+            position_change DECIMAL(5,2) DEFAULT NULL,
             ctr DECIMAL(5,2) DEFAULT 0,
             last_synced DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY post_keyword (post_id, keyword(191)),
             KEY post_id (post_id),
             KEY impressions (impressions)
-        ) $charset;";
+        ) {$charset_collate};";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         dbDelta( $sql_metrics );
@@ -100,32 +91,61 @@ class SCSO_DB {
         $cached    = wp_cache_get( $cache_key, 'scso' );
 
         if ( false !== $cached ) {
-            return $cached;
+            return (bool) $cached;
         }
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $count = (int) $wpdb->get_var(
             $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics WHERE 1 = %d',
-                1
+                "SELECT COUNT(*) FROM {$wpdb->prefix}scso_metrics WHERE impressions > %d",
+                0
             )
         );
 
-        $result = $count > 0;
-        wp_cache_set( $cache_key, $result, 'scso', 300 );
+        wp_cache_set( $cache_key, $count > 0, 'scso', 300 );
 
-        return $result;
+        return $count > 0;
     }
 
     /**
-     * =========================================
-     * KEYWORD METHODS (NEW in v1.1)
-     * =========================================
+     * Clear all data caches.
      */
+    public function clear_caches() {
+        wp_cache_delete( 'scso_has_data', 'scso' );
+        wp_cache_delete( 'scso_opportunities', 'scso' );
+        wp_cache_delete( 'scso_opportunities_count', 'scso' );
+    }
 
     /**
-     * Store keywords for a post.
+     * Get previous keyword positions for a post.
      *
-     * Replaces existing keywords with new data.
+     * @since 1.2.0
+     * @param int $post_id Post ID.
+     * @return array Associative array of keyword => position.
+     */
+    public function get_previous_keyword_positions( $post_id ) {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT keyword, avg_position FROM {$wpdb->prefix}scso_keywords WHERE post_id = %d",
+                absint( $post_id )
+            )
+        );
+
+        $positions = array();
+        if ( $results ) {
+            foreach ( $results as $row ) {
+                $positions[ $row->keyword ] = (float) $row->avg_position;
+            }
+        }
+
+        return $positions;
+    }
+
+    /**
+     * Store keywords for a post with position change tracking.
      *
      * @since 1.1.0
      * @param int   $post_id  Post ID.
@@ -138,29 +158,44 @@ class SCSO_DB {
             return;
         }
 
-        // Delete existing keywords for this post
-        $wpdb->delete(
-            $this->keywords_table,
-            [ 'post_id' => (int) $post_id ],
-            [ '%d' ]
-        );
+        $post_id = absint( $post_id );
 
-        // Insert new keywords (limit to top 10)
+        // Get previous positions before deleting.
+        $prev_positions = $this->get_previous_keyword_positions( $post_id );
+
+        // Delete existing keywords for this post.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( $wpdb->prefix . 'scso_keywords', array( 'post_id' => $post_id ), array( '%d' ) );
+
+        // Insert new keywords (limit to top 10).
         $keywords = array_slice( $keywords, 0, 10 );
 
         foreach ( $keywords as $kw ) {
+            $keyword      = sanitize_text_field( $kw['keyword'] );
+            $new_position = round( (float) $kw['position'], 2 );
+
+            $prev_position   = isset( $prev_positions[ $keyword ] ) ? $prev_positions[ $keyword ] : null;
+            $position_change = null;
+
+            if ( null !== $prev_position ) {
+                $position_change = round( $prev_position - $new_position, 2 );
+            }
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
             $wpdb->insert(
-                $this->keywords_table,
-                [
-                    'post_id'      => (int) $post_id,
-                    'keyword'      => sanitize_text_field( $kw['keyword'] ),
-                    'impressions'  => (int) $kw['impressions'],
-                    'clicks'       => (int) $kw['clicks'],
-                    'avg_position' => round( (float) $kw['position'], 2 ),
-                    'ctr'          => round( (float) $kw['ctr'], 2 ),
-                    'last_synced'  => current_time( 'mysql' ),
-                ],
-                [ '%d', '%s', '%d', '%d', '%f', '%f', '%s' ]
+                $wpdb->prefix . 'scso_keywords',
+                array(
+                    'post_id'         => $post_id,
+                    'keyword'         => $keyword,
+                    'impressions'     => absint( $kw['impressions'] ),
+                    'clicks'          => absint( $kw['clicks'] ),
+                    'avg_position'    => $new_position,
+                    'prev_position'   => $prev_position,
+                    'position_change' => $position_change,
+                    'ctr'             => round( (float) $kw['ctr'], 2 ),
+                    'last_synced'     => current_time( 'mysql' ),
+                ),
+                array( '%d', '%s', '%d', '%d', '%f', '%f', '%f', '%f', '%s' )
             );
         }
     }
@@ -170,11 +205,14 @@ class SCSO_DB {
      *
      * @since 1.1.0
      * @param int $post_id Post ID.
-     * @param int $limit   Max keywords to return. Default 5.
+     * @param int $limit   Max keywords to return.
      * @return array Array of keyword objects.
      */
     public function get_keywords( $post_id, $limit = 5 ) {
         global $wpdb;
+
+        $post_id = absint( $post_id );
+        $limit   = absint( $limit );
 
         $cache_key = 'scso_keywords_' . $post_id . '_' . $limit;
         $cached    = wp_cache_get( $cache_key, 'scso' );
@@ -183,75 +221,51 @@ class SCSO_DB {
             return $cached;
         }
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT keyword, impressions, clicks, avg_position, ctr
-                FROM ' . $wpdb->prefix . 'scso_keywords
+                "SELECT keyword, impressions, clicks, avg_position, prev_position, position_change, ctr
+                FROM {$wpdb->prefix}scso_keywords
                 WHERE post_id = %d
                 ORDER BY impressions DESC
-                LIMIT %d',
-                (int) $post_id,
-                (int) $limit
+                LIMIT %d",
+                $post_id,
+                $limit
             )
         );
 
         wp_cache_set( $cache_key, $results, 'scso', 300 );
+
         return $results;
     }
 
     /**
      * Get keywords for multiple posts at once.
      *
-     * More efficient than calling get_keywords() in a loop.
+     * Uses individual queries per post to avoid dynamic IN clause issues.
      *
      * @since 1.1.0
+     * @since 1.2.5 Rewritten to use loop instead of IN clause
      * @param array $post_ids Array of post IDs.
      * @param int   $limit    Max keywords per post.
-     * @return array Associative array keyed by post_id.
+     * @return array Associative array of post_id => keywords.
      */
     public function get_keywords_bulk( $post_ids, $limit = 5 ) {
-        global $wpdb;
-
         if ( empty( $post_ids ) ) {
-            return [];
+            return array();
         }
 
         $post_ids = array_map( 'absint', $post_ids );
-        $placeholders = implode( ',', array_fill( 0, count( $post_ids ), '%d' ) );
+        $limit    = absint( $limit );
+        $grouped  = array();
 
-        // Get all keywords for these posts, ranked by impressions
-        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-        // phpcs:disable WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
-        $query = $wpdb->prepare(
-            "SELECT post_id, keyword, impressions, clicks, avg_position, ctr
-            FROM {$this->keywords_table}
-            WHERE post_id IN ($placeholders)
-            ORDER BY post_id, impressions DESC",
-            ...$post_ids
-        );
-        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-        // phpcs:enable WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
-        
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $all_keywords = $wpdb->get_results( $query );
-
-        // Group by post_id and limit per post
-        $grouped = [];
-        $counts = [];
-
-        foreach ( $all_keywords as $kw ) {
-            $pid = (int) $kw->post_id;
-
-            if ( ! isset( $counts[ $pid ] ) ) {
-                $counts[ $pid ] = 0;
-            }
-
-            if ( $counts[ $pid ] < $limit ) {
-                if ( ! isset( $grouped[ $pid ] ) ) {
-                    $grouped[ $pid ] = [];
+        // Query each post individually to avoid dynamic IN clause.
+        foreach ( $post_ids as $post_id ) {
+            if ( $post_id > 0 ) {
+                $keywords = $this->get_keywords( $post_id, $limit );
+                if ( ! empty( $keywords ) ) {
+                    $grouped[ $post_id ] = $keywords;
                 }
-                $grouped[ $pid ][] = $kw;
-                $counts[ $pid ]++;
             }
         }
 
@@ -259,7 +273,7 @@ class SCSO_DB {
     }
 
     /**
-     * Check if keywords exist for any post.
+     * Check if keywords table has data.
      *
      * @since 1.1.0
      * @return bool
@@ -267,11 +281,9 @@ class SCSO_DB {
     public function has_keywords() {
         global $wpdb;
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_keywords WHERE 1 = %d',
-                1
-            )
+            "SELECT COUNT(*) FROM {$wpdb->prefix}scso_keywords"
         );
 
         return $count > 0;
@@ -284,545 +296,570 @@ class SCSO_DB {
      */
     public function clear_keywords() {
         global $wpdb;
-        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-        // phpcs:disable PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $wpdb->query( "TRUNCATE TABLE `{$this->keywords_table}`" );
-        // phpcs:enable PluginCheck.Security.DirectDB.UnescapedDBParameter
-        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}scso_keywords" );
     }
 
     /**
-     * =========================================
-     * OPPORTUNITIES METHODS
-     * =========================================
+     * Get opportunities with optional filters.
+     *
+     * @since 1.0.0
+     * @since 1.2.5 Rewritten to use fixed query patterns
+     * @param array $args Query arguments.
+     * @return array
      */
-
     public function get_opportunities( $args = array() ) {
+        global $wpdb;
+
         $defaults = array(
             'limit'        => 20,
             'offset'       => 0,
             'money_only'   => false,
             'search'       => '',
             'show_snoozed' => false,
-            'ctr_gap_only' => false,
         );
 
-        $args = wp_parse_args( $args, $defaults );
+        $args   = wp_parse_args( $args, $defaults );
+        $limit  = absint( $args['limit'] );
+        $offset = absint( $args['offset'] );
+        $now    = current_time( 'mysql' );
 
-        if ( ! empty( $args['search'] ) ) {
-            if ( $args['show_snoozed'] ) {
-                return $this->query_search_snoozed( $args );
-            }
-            return $this->query_search_normal( $args );
-        }
-        if ( $args['money_only'] ) {
-            if ( $args['show_snoozed'] ) {
-                return $this->query_money_snoozed( $args );
-            }
-            return $this->query_money_normal( $args );
-        }
-        if ( $args['show_snoozed'] ) {
-            return $this->query_snoozed( $args );
-        }
-        if ( $args['ctr_gap_only'] ) {
-            if ( $args['show_snoozed'] ) {
-                return $this->query_ctr_snoozed( $args );
-            }
-            return $this->query_ctr_normal( $args );
-        }
-
-        return $this->query_default( $args );
-    }
-
-    private function query_default( $args ) {
-        global $wpdb;
-
-        $cache_key = 'scso_opps_default_' . md5( wp_json_encode( $args ) );
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                AND (clicks < 10 OR ctr < 3)
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-
-        wp_cache_set( $cache_key, $results, 'scso', 300 );
-        return $results;
-    }
-
-    private function query_snoozed( $args ) {
-        global $wpdb;
-
-        $cache_key = 'scso_opps_snoozed_' . md5( wp_json_encode( $args ) );
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                AND (clicks < 10 OR ctr < 3)
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-
-        wp_cache_set( $cache_key, $results, 'scso', 300 );
-        return $results;
-    }
-
-    private function query_money_normal( $args ) {
-        global $wpdb;
-
-        $cache_key = 'scso_opps_money_n_' . md5( wp_json_encode( $args ) );
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND impressions >= 100
-                AND avg_position BETWEEN 5 AND 20
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-
-        wp_cache_set( $cache_key, $results, 'scso', 300 );
-        return $results;
-    }
-
-    private function query_money_snoozed( $args ) {
-        global $wpdb;
-
-        $cache_key = 'scso_opps_money_s_' . md5( wp_json_encode( $args ) );
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND impressions >= 100
-                AND avg_position BETWEEN 5 AND 20
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-
-        wp_cache_set( $cache_key, $results, 'scso', 300 );
-        return $results;
-    }
-
-    private function query_ctr_normal( $args ) {
-        global $wpdb;
-
-        $cache_key = 'scso_opps_ctr_n_' . md5( wp_json_encode( $args ) );
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-
-        wp_cache_set( $cache_key, $results, 'scso', 300 );
-        return $results;
-    }
-
-    private function query_ctr_snoozed( $args ) {
-        global $wpdb;
-
-        $cache_key = 'scso_opps_ctr_s_' . md5( wp_json_encode( $args ) );
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
+        // Build query based on filter combination.
+        if ( $args['money_only'] && ! empty( $args['search'] ) && $args['show_snoozed'] ) {
+            // Money + Search + Snoozed.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND m.snoozed_until > %s
+                    AND p.post_title LIKE %s
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $search_term,
+                    $limit,
+                    $offset
+                )
+            );
+        } elseif ( $args['money_only'] && ! empty( $args['search'] ) ) {
+            // Money + Search.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)
+                    AND p.post_title LIKE %s
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $search_term,
+                    $limit,
+                    $offset
+                )
+            );
+        } elseif ( $args['money_only'] && $args['show_snoozed'] ) {
+            // Money + Snoozed.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND m.snoozed_until > %s
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $limit,
+                    $offset
+                )
+            );
+        } elseif ( $args['money_only'] ) {
+            // Money only.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $limit,
+                    $offset
+                )
+            );
+        } elseif ( ! empty( $args['search'] ) && $args['show_snoozed'] ) {
+            // Search + Snoozed.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions > 0
+                    AND m.snoozed_until > %s
+                    AND p.post_title LIKE %s
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $search_term,
+                    $limit,
+                    $offset
+                )
+            );
+        } elseif ( ! empty( $args['search'] ) ) {
+            // Search only.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions > 0
+                    AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)
+                    AND p.post_title LIKE %s
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $search_term,
+                    $limit,
+                    $offset
+                )
+            );
+        } elseif ( $args['show_snoozed'] ) {
+            // Snoozed only.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT m.*, p.post_title, p.guid
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions > 0
+                    AND m.snoozed_until > %s
+                    ORDER BY m.opportunity_score DESC, m.impressions DESC
+                    LIMIT %d OFFSET %d",
+                    $now,
+                    $limit,
+                    $offset
+                )
+            );
         }
 
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-
-        wp_cache_set( $cache_key, $results, 'scso', 300 );
-        return $results;
-    }
-
-    private function query_search_normal( $args ) {
-        global $wpdb;
-
-        $search_like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
-
+        // Default: no filters.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         return $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND post_id IN (
-                    SELECT ID FROM ' . $wpdb->posts . ' WHERE post_title LIKE %s
-                )
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                $search_like,
-                (int) $args['limit'],
-                (int) $args['offset']
-            )
-        );
-    }
-
-    private function query_search_snoozed( $args ) {
-        global $wpdb;
-
-        $search_like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
-
-        return $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND post_id IN (
-                    SELECT ID FROM ' . $wpdb->posts . ' WHERE post_title LIKE %s
-                )
-                ORDER BY opportunity_score DESC
-                LIMIT %d OFFSET %d',
-                $search_like,
-                (int) $args['limit'],
-                (int) $args['offset']
+                "SELECT m.*, p.post_title, p.guid
+                FROM {$wpdb->prefix}scso_metrics m
+                INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                WHERE m.impressions > 0
+                AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)
+                ORDER BY m.opportunity_score DESC, m.impressions DESC
+                LIMIT %d OFFSET %d",
+                $now,
+                $limit,
+                $offset
             )
         );
     }
 
     /**
-     * =========================================
-     * COUNT METHODS
-     * =========================================
+     * Count opportunities with optional filters.
+     *
+     * @since 1.0.0
+     * @since 1.2.5 Rewritten to use fixed query patterns
+     * @param array $args Query arguments.
+     * @return int
      */
-
     public function count_opportunities( $args = array() ) {
+        global $wpdb;
+
         $defaults = array(
             'money_only'   => false,
             'search'       => '',
             'show_snoozed' => false,
-            'ctr_gap_only' => false,
         );
 
         $args = wp_parse_args( $args, $defaults );
+        $now  = current_time( 'mysql' );
 
-        if ( ! empty( $args['search'] ) ) {
-            if ( $args['show_snoozed'] ) {
-                return $this->count_search_snoozed( $args );
-            }
-            return $this->count_search_normal( $args );
+        // Build query based on filter combination.
+        if ( $args['money_only'] && ! empty( $args['search'] ) && $args['show_snoozed'] ) {
+            // Money + Search + Snoozed.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND m.snoozed_until > %s
+                    AND p.post_title LIKE %s",
+                    $now,
+                    $search_term
+                )
+            );
+        } elseif ( $args['money_only'] && ! empty( $args['search'] ) ) {
+            // Money + Search.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)
+                    AND p.post_title LIKE %s",
+                    $now,
+                    $search_term
+                )
+            );
+        } elseif ( $args['money_only'] && $args['show_snoozed'] ) {
+            // Money + Snoozed.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND m.snoozed_until > %s",
+                    $now
+                )
+            );
+        } elseif ( $args['money_only'] ) {
+            // Money only.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions >= 100
+                    AND m.avg_position BETWEEN 5 AND 20
+                    AND m.opportunity_score >= 60
+                    AND m.marked_updated = 0
+                    AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)",
+                    $now
+                )
+            );
+        } elseif ( ! empty( $args['search'] ) && $args['show_snoozed'] ) {
+            // Search + Snoozed.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions > 0
+                    AND m.snoozed_until > %s
+                    AND p.post_title LIKE %s",
+                    $now,
+                    $search_term
+                )
+            );
+        } elseif ( ! empty( $args['search'] ) ) {
+            // Search only.
+            $search_term = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions > 0
+                    AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)
+                    AND p.post_title LIKE %s",
+                    $now,
+                    $search_term
+                )
+            );
+        } elseif ( $args['show_snoozed'] ) {
+            // Snoozed only.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            return (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*)
+                    FROM {$wpdb->prefix}scso_metrics m
+                    INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                    WHERE m.impressions > 0
+                    AND m.snoozed_until > %s",
+                    $now
+                )
+            );
         }
 
-        if ( $args['money_only'] ) {
-            if ( $args['show_snoozed'] ) {
-                return $this->count_money_snoozed();
-            }
-            return $this->count_money_normal();
-        }
-
-        if ( $args['show_snoozed'] ) {
-            return $this->count_snoozed();
-        }
-
-        if ( $args['ctr_gap_only'] ) {
-            if ( $args['show_snoozed'] ) {
-                return $this->count_ctr_snoozed();
-            }
-            return $this->count_ctr_normal();
-        }
-
-        return $this->count_default();
-    }
-
-    private function count_default() {
-        global $wpdb;
-
-        $cache_key = 'scso_count_default';
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > %d
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                AND (clicks < 10 OR ctr < 3)',
-                0
-            )
-        );
-
-        wp_cache_set( $cache_key, $count, 'scso', 300 );
-        return $count;
-    }
-
-    private function count_snoozed() {
-        global $wpdb;
-
-        $cache_key = 'scso_count_snoozed';
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > %d
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                AND (clicks < 10 OR ctr < 3)',
-                0
-            )
-        );
-
-        wp_cache_set( $cache_key, $count, 'scso', 300 );
-        return $count;
-    }
-
-    private function count_money_normal() {
-        global $wpdb;
-
-        $cache_key = 'scso_count_money_n';
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > %d
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND impressions >= 100
-                AND avg_position BETWEEN 5 AND 20',
-                0
-            )
-        );
-
-        wp_cache_set( $cache_key, $count, 'scso', 300 );
-        return $count;
-    }
-
-    private function count_money_snoozed() {
-        global $wpdb;
-
-        $cache_key = 'scso_count_money_s';
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > %d
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND impressions >= 100
-                AND avg_position BETWEEN 5 AND 20',
-                0
-            )
-        );
-
-        wp_cache_set( $cache_key, $count, 'scso', 300 );
-        return $count;
-    }
-
-    private function count_ctr_normal() {
-        global $wpdb;
-
-        $cache_key = 'scso_count_ctr_n';
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > %d
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())',
-                0
-            )
-        );
-
-        wp_cache_set( $cache_key, $count, 'scso', 300 );
-        return $count;
-    }
-
-    private function count_ctr_snoozed() {
-        global $wpdb;
-
-        $cache_key = 'scso_count_ctr_s';
-        $cached    = wp_cache_get( $cache_key, 'scso' );
-        if ( false !== $cached ) {
-            return $cached;
-        }
-
-        $count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > %d
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())',
-                0
-            )
-        );
-
-        wp_cache_set( $cache_key, $count, 'scso', 300 );
-        return $count;
-    }
-
-    private function count_search_normal( $args ) {
-        global $wpdb;
-
-        $search_like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
-
+        // Default: no filters.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         return (int) $wpdb->get_var(
             $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NULL OR snoozed_until < NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND post_id IN (
-                    SELECT ID FROM ' . $wpdb->posts . ' WHERE post_title LIKE %s
-                )',
-                $search_like
-            )
-        );
-    }
-
-    private function count_search_snoozed( $args ) {
-        global $wpdb;
-
-        $search_like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
-
-        return (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics
-                WHERE impressions > 0
-                AND (marked_updated = 0 OR marked_updated IS NULL)
-                AND (snoozed_until IS NOT NULL AND snoozed_until > NOW())
-                AND (clicks < 10 OR ctr < 3)
-                AND post_id IN (
-                    SELECT ID FROM ' . $wpdb->posts . ' WHERE post_title LIKE %s
-                )',
-                $search_like
+                "SELECT COUNT(*)
+                FROM {$wpdb->prefix}scso_metrics m
+                INNER JOIN {$wpdb->posts} p ON m.post_id = p.ID
+                WHERE m.impressions > 0
+                AND (m.snoozed_until IS NULL OR m.snoozed_until <= %s)",
+                $now
             )
         );
     }
 
     /**
-     * =========================================
-     * STATS & UTILITY METHODS
-     * =========================================
+     * Get previous position for a post.
+     *
+     * @since 1.2.0
+     * @param int $post_id Post ID.
+     * @return float|null Previous position or null if not found.
      */
+    public function get_previous_position( $post_id ) {
+        global $wpdb;
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $result = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT avg_position FROM {$wpdb->prefix}scso_metrics WHERE post_id = %d",
+                absint( $post_id )
+            )
+        );
+
+        return null !== $result ? (float) $result : null;
+    }
+
+    /**
+     * Count positions that improved since last sync.
+     *
+     * @since 1.2.0
+     * @return int
+     */
+    public function count_positions_improved() {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}scso_metrics WHERE position_change > %f AND position_change IS NOT NULL",
+                0.3
+            )
+        );
+    }
+
+    /**
+     * Count positions that dropped since last sync.
+     *
+     * @since 1.2.0
+     * @return int
+     */
+    public function count_positions_dropped() {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}scso_metrics WHERE position_change < %f AND position_change IS NOT NULL",
+                -0.3
+            )
+        );
+    }
+
+    /**
+     * Upsert metrics data.
+     *
+     * @param int    $post_id    Post ID.
+     * @param string $url        URL.
+     * @param array  $data       Metrics data.
+     * @param array  $score_data Score data.
+     */
+    public function upsert( $post_id, $url, $data, $score_data ) {
+        global $wpdb;
+
+        $post_id       = absint( $post_id );
+        $prev_position = $this->get_previous_position( $post_id );
+        $new_position  = (float) $data['position'];
+
+        $position_change = null;
+        if ( null !== $prev_position ) {
+            $position_change = round( $prev_position - $new_position, 2 );
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->replace(
+            $wpdb->prefix . 'scso_metrics',
+            array(
+                'post_id'            => $post_id,
+                'url'                => esc_url_raw( $url ),
+                'impressions'        => absint( $data['impressions'] ),
+                'clicks'             => absint( $data['clicks'] ),
+                'avg_position'       => $new_position,
+                'prev_position'      => $prev_position,
+                'position_change'    => $position_change,
+                'ctr'                => (float) $data['ctr'],
+                'opportunity_score'  => absint( $score_data['score'] ),
+                'opportunity_reason' => sanitize_text_field( $score_data['reason'] ),
+                'last_synced'        => current_time( 'mysql' ),
+            )
+        );
+    }
+
+    /**
+     * Calculate opportunity score.
+     *
+     * @param array $data Metrics data.
+     * @return array Score and reason.
+     */
+    public function calculate_score( $data ) {
+        $impressions = absint( $data['impressions'] );
+        $position    = (float) $data['position'];
+        $ctr         = (float) $data['ctr'];
+
+        $score  = 0;
+        $reason = '';
+
+        if ( $position <= 3 ) {
+            $score += 10;
+            $reason = 'Already in top 3';
+        } elseif ( $position <= 5 ) {
+            $score += 30;
+            $reason = 'Close to top 3';
+        } elseif ( $position <= 10 ) {
+            $score += 40;
+            $reason = 'Page 1, can reach top 5';
+        } elseif ( $position <= 20 ) {
+            $score += 35;
+            $reason = 'Page 2, can reach page 1';
+        } elseif ( $position <= 30 ) {
+            $score += 20;
+            $reason = 'Page 3, needs work';
+        } else {
+            $score += 5;
+            $reason = 'Low visibility';
+        }
+
+        if ( $impressions >= 1000 ) {
+            $score += 30;
+        } elseif ( $impressions >= 500 ) {
+            $score += 25;
+        } elseif ( $impressions >= 100 ) {
+            $score += 20;
+        } elseif ( $impressions >= 50 ) {
+            $score += 15;
+        } elseif ( $impressions >= 10 ) {
+            $score += 10;
+        } else {
+            $score += 5;
+        }
+
+        $expected_ctr = $this->expected_ctr( $position );
+        if ( $ctr > 0 && $ctr < $expected_ctr * 0.5 ) {
+            $score += 30;
+        } elseif ( $ctr > 0 && $ctr < $expected_ctr * 0.7 ) {
+            $score += 20;
+        } elseif ( $ctr > 0 && $ctr < $expected_ctr ) {
+            $score += 10;
+        }
+
+        return array(
+            'score'  => min( 100, $score ),
+            'reason' => $reason,
+        );
+    }
+
+    /**
+     * Get expected CTR for position.
+     *
+     * @param float $position Position.
+     * @return float Expected CTR.
+     */
+    private function expected_ctr( $position ) {
+        if ( $position <= 1 ) {
+            return 30;
+        }
+        if ( $position <= 3 ) {
+            return 10;
+        }
+        if ( $position <= 5 ) {
+            return 5;
+        }
+        if ( $position <= 10 ) {
+            return 2.5;
+        }
+        return 1;
+    }
+
+    /**
+     * Get stats for dashboard.
+     *
+     * @return array
+     */
     public function stats() {
         global $wpdb;
 
-        // No caching - stats are only fetched once per admin page load
-        // and need to reflect the latest sync time immediately
-
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $posts_with_traffic = (int) $wpdb->get_var(
             $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics WHERE impressions > %d',
+                "SELECT COUNT(*) FROM {$wpdb->prefix}scso_metrics WHERE impressions > %d",
                 0
             )
         );
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $high_opportunity = (int) $wpdb->get_var(
             $wpdb->prepare(
-                'SELECT COUNT(*) FROM ' . $wpdb->prefix . 'scso_metrics WHERE opportunity_score >= %d',
+                "SELECT COUNT(*) FROM {$wpdb->prefix}scso_metrics WHERE opportunity_score >= %d",
                 60
             )
         );
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $total_keywords = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                'SELECT COUNT(DISTINCT keyword) FROM ' . $wpdb->prefix . 'scso_keywords WHERE 1 = %d',
-                1
-            )
+            "SELECT COUNT(DISTINCT keyword) FROM {$wpdb->prefix}scso_keywords"
         );
 
-        // Bypass object cache - read directly from database
-        $last_synced = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s LIMIT 1",
-                'scso_last_sync_time'
-            )
-        );
+        $positions_improved = $this->count_positions_improved();
+        $positions_dropped  = $this->count_positions_dropped();
 
-        if ( ! $last_synced ) {
+        $last_synced = get_option( 'scso_last_sync_time', '' );
+
+        if ( empty( $last_synced ) ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $last_synced = $wpdb->get_var(
-                $wpdb->prepare(
-                    'SELECT MAX(last_synced) FROM ' . $wpdb->prefix . 'scso_metrics WHERE 1 = %d',
-                    1
-                )
+                "SELECT MAX(last_synced) FROM {$wpdb->prefix}scso_metrics"
             );
         }
 
@@ -830,66 +867,102 @@ class SCSO_DB {
             'posts_with_traffic' => $posts_with_traffic,
             'high_opportunity'   => $high_opportunity,
             'total_keywords'     => $total_keywords,
+            'positions_improved' => $positions_improved,
+            'positions_dropped'  => $positions_dropped,
             'last_synced'        => $last_synced,
         );
     }
 
+    /**
+     * Mark post as updated.
+     *
+     * @param int $post_id Post ID.
+     */
     public function mark_updated( $post_id ) {
         global $wpdb;
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->update(
             $wpdb->prefix . 'scso_metrics',
-            array(
-                'marked_updated' => 1,
-                'snoozed_until'  => null,
-            ),
-            array( 'post_id' => (int) $post_id ),
-            array( '%d', '%s' ),
+            array( 'marked_updated' => 1 ),
+            array( 'post_id' => absint( $post_id ) ),
+            array( '%d' ),
             array( '%d' )
         );
-
-        $this->clear_caches();
     }
 
+    /**
+     * Snooze post for given days.
+     *
+     * @param int $post_id Post ID.
+     * @param int $days    Days to snooze.
+     */
     public function snooze( $post_id, $days = 30 ) {
         global $wpdb;
 
+        $days         = absint( $days );
+        $snooze_until = gmdate( 'Y-m-d H:i:s', strtotime( '+' . $days . ' days' ) );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->update(
             $wpdb->prefix . 'scso_metrics',
-            array(
-                'snoozed_until' => gmdate( 'Y-m-d H:i:s', strtotime( '+' . absint( $days ) . ' days' ) ),
-            ),
-            array( 'post_id' => (int) $post_id ),
+            array( 'snoozed_until' => $snooze_until ),
+            array( 'post_id' => absint( $post_id ) ),
             array( '%s' ),
             array( '%d' )
         );
-
-        $this->clear_caches();
     }
 
+    /**
+     * Unsnooze post.
+     *
+     * @param int $post_id Post ID.
+     */
     public function unsnooze( $post_id ) {
         global $wpdb;
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->update(
             $wpdb->prefix . 'scso_metrics',
             array( 'snoozed_until' => null ),
-            array( 'post_id' => (int) $post_id ),
-            array( '%s' ),
+            array( 'post_id' => absint( $post_id ) ),
+            array( null ),
             array( '%d' )
         );
-
-        $this->clear_caches();
     }
 
-    public function clear_caches() {
-        wp_cache_delete( 'scso_stats', 'scso' );
-        wp_cache_delete( 'scso_has_data', 'scso' );
-        wp_cache_delete( 'scso_count_default', 'scso' );
-        wp_cache_delete( 'scso_count_snoozed', 'scso' );
-        wp_cache_delete( 'scso_count_money_n', 'scso' );
-        wp_cache_delete( 'scso_count_money_s', 'scso' );
-        wp_cache_delete( 'scso_count_ctr_n', 'scso' );
-        wp_cache_delete( 'scso_count_ctr_s', 'scso' );
+    /**
+     * Delete all data for a post.
+     *
+     * @param int $post_id Post ID.
+     */
+    public function delete_post_data( $post_id ) {
+        global $wpdb;
+
+        $post_id = absint( $post_id );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( $wpdb->prefix . 'scso_metrics', array( 'post_id' => $post_id ), array( '%d' ) );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( $wpdb->prefix . 'scso_keywords', array( 'post_id' => $post_id ), array( '%d' ) );
+    }
+
+    /**
+     * Cleanup old data.
+     *
+     * @param int $days Days to keep.
+     */
+    public function cleanup_old_data( $days = 90 ) {
+        global $wpdb;
+
+        $cutoff = gmdate( 'Y-m-d H:i:s', strtotime( '-' . absint( $days ) . ' days' ) );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->prefix}scso_metrics WHERE last_synced < %s",
+                $cutoff
+            )
+        );
     }
 }
-// phpcs:enable

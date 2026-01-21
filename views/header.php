@@ -12,6 +12,7 @@ if ( ! defined('ABSPATH') ) exit;
 $scso_last_sync = get_option('scso_last_sync_time');
 $scso_hours_ago = $scso_last_sync ? (time() - strtotime($scso_last_sync)) / 3600 : 999;
 $scso_can_sync = $scso_hours_ago >= 24;
+$scso_hours_remaining = max(0, ceil(24 - $scso_hours_ago));
 ?>
 <div class="scso-container-opportunities">
 <div class="scso-header">
@@ -20,9 +21,14 @@ $scso_can_sync = $scso_hours_ago >= 24;
         <p class="scso-subtitle"><?php esc_html_e('Posts Google already likes but are underperforming', 'rankiva-seo-insights-for-gsc'); ?></p>
     </div>
     <div class="scso-header-actions">
-        <button class="scso-sync-btn scso-sync-trigger" <?php echo !$scso_can_sync ? 'disabled title="' . esc_attr__('Re-sync available in ', 'rankiva-seo-insights-for-gsc') . esc_attr( round(24 - $scso_hours_ago) ) . 'h"' : ''; ?>>
-        🔄 <?php esc_html_e('Re-Sync', 'rankiva-seo-insights-for-gsc'); ?>
-        </button>
+        <div class="scso-sync-wrapper">
+            <button class="scso-sync-btn scso-sync-trigger" <?php echo !$scso_can_sync ? 'disabled' : ''; ?>>
+            🔄 <?php esc_html_e('Re-Sync', 'rankiva-seo-insights-for-gsc'); ?>
+            </button>
+            <?php if ( ! $scso_can_sync ) : ?>
+                <span class="scso-sync-notice"><?php echo esc_html__('Available in ', 'rankiva-seo-insights-for-gsc') . esc_html($scso_hours_remaining) . 'h'; ?></span>
+            <?php endif; ?>
+        </div>
         <button id="scso-disconnect-btn" class="scso-disconnect-btn">🚫 <?php esc_html_e('Disconnect', 'rankiva-seo-insights-for-gsc'); ?></button>
     </div>
 </div>
