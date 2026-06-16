@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) exit;
 
 class SCSO_GSC_Auth {
 
-    private $proxy_url = 'https://auth.wpfixfree.com/oauth/';
+    private $proxy_url = 'https://auth.theme-x.org/oauth/';
     private $use_proxy = true;
     
     private $client_id = '';
@@ -40,6 +40,7 @@ class SCSO_GSC_Auth {
 
         add_action('admin_init', [$this, 'handle_callback']);
         add_action('wp_ajax_scso_disconnect', [$this, 'ajax_disconnect']);
+        add_action('wp_ajax_scso_complete_oauth', [$this, 'ajax_complete_oauth']);
         add_action('admin_menu', [$this, 'add_settings_page'], 99);
     }
 
@@ -308,19 +309,17 @@ class SCSO_GSC_Auth {
         }
 
         $retrieve_url = rtrim($this->proxy_url, '/') . '/retrieve.php?token=' . urlencode($temp_token);
+        $this->render_browser_proxy_callback($retrieve_url);
+        exit;
+    }
 
-        $response = wp_remote_get($retrieve_url, ['timeout' => 30]);
-
-        if (is_wp_error($response)) {
-            wp_die(esc_html('OAuth token retrieval failed: ' . $response->get_error_message()));
-        }
-
-        $tokens = json_decode(wp_remote_retrieve_body($response), true);
-
-        if (empty($tokens['access_token'])) {
-            wp_die('Invalid OAuth response.');
-        }
-
+    /**
+     * Save OAuth tokens to WordPress options.
+     *
+     * @param array $tokens Token payload.
+     * @return void
+     */
+    private function persist_oauth_tokens($tokens) {
         $tokens['created_at'] = $tokens['created_at'] ?? time();
         $account_id = $tokens['account_id'] ?? $tokens['sub'] ?? $tokens['email'] ?? ('proxy-' . md5($tokens['access_token']));
 
@@ -328,9 +327,44 @@ class SCSO_GSC_Auth {
         update_option('scso_gsc_account_email', $tokens['email'] ?? '', false);
         update_option('scso_gsc_token', $tokens, false);
         delete_transient('scso_sync_error');
+    }
 
-        wp_safe_redirect(admin_url('admin.php?page=scso-opportunities'));
-        exit;
+    /**
+     * Browser-side token retrieval fallback for hosts that block outbound HTTP.
+     *
+     * @param string $retrieve_url Proxy retrieve endpoint.
+     * @return void
+     */
+    private function render_browser_proxy_callback($retrieve_url) {
+        $complete_nonce = wp_create_nonce('scso_complete_oauth');
+        $ajax_url = admin_url('admin-ajax.php');
+        $redirect_url = admin_url('admin.php?page=scso-opportunities');
+
+        require SCSO_DIR . 'views/oauth-callback-proxy.php';
+    }
+
+    /**
+     * Complete OAuth connection using browser-fetched tokens.
+     *
+     * @return void
+     */
+    public function ajax_complete_oauth() {
+        check_ajax_referer('scso_complete_oauth', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Unauthorized', 'rankiva-seo-insights-for-gsc')]);
+        }
+
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+        $raw_tokens = isset($_POST['tokens']) ? wp_unslash($_POST['tokens']) : '';
+        $tokens = json_decode($raw_tokens, true);
+
+        if (empty($tokens['access_token'])) {
+            wp_send_json_error(['message' => __('Invalid OAuth response.', 'rankiva-seo-insights-for-gsc')]);
+        }
+
+        $this->persist_oauth_tokens($tokens);
+        wp_send_json_success(['redirect' => admin_url('admin.php?page=scso-opportunities')]);
     }
 
     /**
