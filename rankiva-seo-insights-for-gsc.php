@@ -3,7 +3,7 @@
  * Plugin Name: Rankiva – SEO & Keyword Insights for Google Search Console
  * Plugin URI: https://wordpress.org/plugins/rankiva-seo-insights-for-gsc/
  * Description: Get actionable SEO insights from Google Search Console to identify underperforming content with keyword-level insights!
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: theme-x
  * Author URI: https://theme-x.org/
  * License: GPL3
@@ -18,7 +18,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Plugin constants
-define('SCSO_VERSION', '1.2.0');
+define('SCSO_VERSION', '1.2.1');
 define('SCSO_DB_VERSION', '1.2.0');
 define('SCSO_FILE', __FILE__);
 define('SCSO_DIR', plugin_dir_path(__FILE__));
